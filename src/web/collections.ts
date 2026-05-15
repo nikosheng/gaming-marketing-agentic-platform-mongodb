@@ -7,4 +7,7 @@ export const webCollections = {
   riskCases: "patron_risk_cases",
   prAgents: "pr_agent_profiles",
   prAssignments: "pr_assignments",
+  tableStateHistory: "table_state_history",
+  minBetRecommendations: "table_minbet_recommendations",
+  minBetAudit: "table_minbet_audit",
 };

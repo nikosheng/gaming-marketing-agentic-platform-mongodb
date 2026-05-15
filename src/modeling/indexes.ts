@@ -13,6 +13,9 @@ export const collections = {
   riskCases: "patron_risk_cases",
   prAgents: "pr_agent_profiles",
   prAssignments: "pr_assignments",
+  tableStateHistory: "table_state_history",
+  minBetRecommendations: "table_minbet_recommendations",
+  minBetAudit: "table_minbet_audit",
 };
 
 async function createVectorIndexIfNeeded(
@@ -131,6 +134,26 @@ export async function ensureIndexes(db: Db): Promise<void> {
   await db.collection(collections.prAssignments).createIndex({ assignmentId: 1 }, { unique: true });
   await db.collection(collections.prAssignments).createIndex({ prAgentId: 1, status: 1 });
   await db.collection(collections.prAssignments).createIndex({ caseId: 1 });
+
+  await db
+    .collection(collections.tableStateHistory)
+    .createIndex({ tableId: 1, refreshedAt: -1 });
+  // 7-day retention for history snapshots
+  await db
+    .collection(collections.tableStateHistory)
+    .createIndex({ refreshedAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 7 });
+
+  await db
+    .collection(collections.minBetRecommendations)
+    .createIndex({ recommendationId: 1 }, { unique: true });
+  await db
+    .collection(collections.minBetRecommendations)
+    .createIndex({ tableId: 1, createdAt: -1 });
+  await db
+    .collection(collections.minBetRecommendations)
+    .createIndex({ status: 1, expiresAt: 1 });
+
+  await db.collection(collections.minBetAudit).createIndex({ tableId: 1, at: -1 });
 
   await createVectorIndexIfNeeded(
     db,

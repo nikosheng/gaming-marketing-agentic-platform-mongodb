@@ -186,6 +186,42 @@ type PRAssignmentPayload = {
   assignedAt: string;
 };
 
+type MinBetRecommendation = {
+  recommendationId: string;
+  tableId: string;
+  runId: string;
+  currentMinBet: number;
+  recommendedMinBet: number;
+  deltaPct: number;
+  expectedRevenueUpliftPct: number;
+  confidence: number;
+  rationale: string;
+  reasons: string[];
+  drivers: {
+    occupancyTrend: "Rising" | "Stable" | "Falling";
+    occupancyVelocity: number;
+    occupancyRate: number;
+    betHeadroom: number;
+    lowBetShare: number;
+    p50Bet: number;
+    p75Bet: number;
+    p90Bet: number;
+    tierMix: Record<string, number>;
+    zone: string;
+    gameType: string;
+  };
+  candidates: Array<{
+    minBet: number;
+    deltaPct: number;
+    expectedRevenuePct: number;
+    estimatedRetentionPct: number;
+  }>;
+  status: "Proposed" | "Approved" | "Applied" | "Rejected" | "Expired" | "Skipped";
+  skipReason?: string;
+  createdAt: string;
+  expiresAt: string;
+};
+
 type ConsoleSection = "patron-eyes" | "offer-catalog";
 
 const promptTemplates = [
@@ -397,6 +433,10 @@ export default function DashboardClient() {
   const [riskCasePatronId, setRiskCasePatronId] = useState<string>("");
   const [adminDecision, setAdminDecision] = useState<"Approve" | "Reject" | "RequestMoreInfo">("Approve");
   const [adminRationale, setAdminRationale] = useState<string>("");
+  const [minBetRecommendation, setMinBetRecommendation] = useState<MinBetRecommendation | null>(null);
+  const [minBetHistory, setMinBetHistory] = useState<MinBetRecommendation[]>([]);
+  const [minBetLoading, setMinBetLoading] = useState<boolean>(false);
+  const [minBetActionLoading, setMinBetActionLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
 
   useEffect(() => {
@@ -426,6 +466,8 @@ export default function DashboardClient() {
   useEffect(() => {
     if (!selectedTableId) return;
     setTableAnalysis(null);
+    setMinBetRecommendation(null);
+    setMinBetHistory([]);
     async function fetchPatrons() {
       const res = await fetch(`/api/tables/${selectedTableId}/patrons`, { cache: "no-store" });
       const data = (await res.json()) as PatronResponse;
@@ -433,7 +475,19 @@ export default function DashboardClient() {
       setPatrons(data);
       setGeneratePatronId((current) => current || data.patrons[0]?.patronId || "");
     }
+    async function fetchMinBetHistory() {
+      const res = await fetch(`/api/tables/${selectedTableId}/minbet-recommendations`, {
+        cache: "no-store",
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        recommendations?: MinBetRecommendation[];
+      };
+      if (!data.ok) return;
+      setMinBetHistory(data.recommendations ?? []);
+    }
     fetchPatrons().catch((err) => setError((err as Error).message));
+    fetchMinBetHistory().catch(() => undefined);
   }, [selectedTableId]);
 
   const topRecommendations = useMemo(
@@ -529,6 +583,119 @@ export default function DashboardClient() {
       setError((err as Error).message);
     } finally {
       setAnalysisLoading(false);
+    }
+  }
+
+  async function onOptimizeMinBet() {
+    if (!selectedTableId || minBetLoading) return;
+    setMinBetLoading(true);
+    try {
+      const res = await fetch(`/api/tables/${selectedTableId}/optimize-minbet`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        recommendation?: MinBetRecommendation;
+        error?: string;
+      };
+      if (!data.ok || !data.recommendation) {
+        setError(data.error ?? "Failed to optimize min bet.");
+        return;
+      }
+      setMinBetRecommendation(data.recommendation);
+      const histRes = await fetch(`/api/tables/${selectedTableId}/minbet-recommendations`, {
+        cache: "no-store",
+      });
+      const histData = (await histRes.json()) as {
+        ok: boolean;
+        recommendations?: MinBetRecommendation[];
+      };
+      if (histData.ok) setMinBetHistory(histData.recommendations ?? []);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setMinBetLoading(false);
+    }
+  }
+
+  async function onApplyMinBet() {
+    if (!selectedTableId || !minBetRecommendation || minBetActionLoading) return;
+    setMinBetActionLoading(true);
+    try {
+      const res = await fetch(
+        `/api/tables/${selectedTableId}/minbet-recommendations/${minBetRecommendation.recommendationId}/apply`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        }
+      );
+      const data = (await res.json()) as {
+        ok: boolean;
+        oldMinBet?: number;
+        newMinBet?: number;
+        error?: string;
+      };
+      if (!data.ok) {
+        setError(data.error ?? "Failed to apply recommendation.");
+        return;
+      }
+      // Refresh heatmap and history.
+      const [heatmapRes, histRes] = await Promise.all([
+        fetch("/api/tables/heatmap", { cache: "no-store" }),
+        fetch(`/api/tables/${selectedTableId}/minbet-recommendations`, { cache: "no-store" }),
+      ]);
+      const heatmapData = (await heatmapRes.json()) as HeatmapResponse;
+      if (heatmapData.ok) setHeatmap(heatmapData);
+      const histData = (await histRes.json()) as {
+        ok: boolean;
+        recommendations?: MinBetRecommendation[];
+      };
+      if (histData.ok) setMinBetHistory(histData.recommendations ?? []);
+      setMinBetRecommendation((current) =>
+        current ? { ...current, status: "Applied" } : current
+      );
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setMinBetActionLoading(false);
+    }
+  }
+
+  async function onRejectMinBet() {
+    if (!selectedTableId || !minBetRecommendation || minBetActionLoading) return;
+    setMinBetActionLoading(true);
+    try {
+      const res = await fetch(
+        `/api/tables/${selectedTableId}/minbet-recommendations/${minBetRecommendation.recommendationId}/reject`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        }
+      );
+      const data = (await res.json()) as { ok: boolean; error?: string };
+      if (!data.ok) {
+        setError(data.error ?? "Failed to reject recommendation.");
+        return;
+      }
+      setMinBetRecommendation((current) =>
+        current ? { ...current, status: "Rejected" } : current
+      );
+      const histRes = await fetch(`/api/tables/${selectedTableId}/minbet-recommendations`, {
+        cache: "no-store",
+      });
+      const histData = (await histRes.json()) as {
+        ok: boolean;
+        recommendations?: MinBetRecommendation[];
+      };
+      if (histData.ok) setMinBetHistory(histData.recommendations ?? []);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setMinBetActionLoading(false);
     }
   }
 
@@ -737,6 +904,174 @@ export default function DashboardClient() {
                     </div>
                   </div>
                 ))}
+              </div>
+              <div className="minbet-shell">
+                <div className="drilldown-head minbet-head">
+                  <h3 className="panel-title minbet-title">Min-Bet Optimization</h3>
+                  <button
+                    className="button analysis-button"
+                    onClick={() => onOptimizeMinBet().catch(() => undefined)}
+                    type="button"
+                    disabled={!selectedTableId || minBetLoading}
+                  >
+                    {minBetLoading ? "Optimizing..." : "Run Optimizer Agent"}
+                  </button>
+                </div>
+                {minBetRecommendation ? (
+                  <div className="minbet-card">
+                    <div className="minbet-headline">
+                      <div className="minbet-bet-block">
+                        <span className="small">Current Min Bet</span>
+                        <strong>{formatAmount(minBetRecommendation.currentMinBet)}</strong>
+                      </div>
+                      <span className="minbet-arrow">→</span>
+                      <div className="minbet-bet-block">
+                        <span className="small">Recommended</span>
+                        <strong>{formatAmount(minBetRecommendation.recommendedMinBet)}</strong>
+                      </div>
+                      <span
+                        className={`analysis-badge ${
+                          minBetRecommendation.deltaPct > 0
+                            ? "high"
+                            : minBetRecommendation.deltaPct < 0
+                              ? "medium"
+                              : "low"
+                        }`}
+                      >
+                        {minBetRecommendation.deltaPct >= 0 ? "+" : ""}
+                        {(minBetRecommendation.deltaPct * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="analysis-metric-grid">
+                      <div className="analysis-metric-card">
+                        <div className="analysis-metric-head">
+                          <span>Expected Uplift</span>
+                        </div>
+                        <strong>
+                          {minBetRecommendation.expectedRevenueUpliftPct >= 0 ? "+" : ""}
+                          {(minBetRecommendation.expectedRevenueUpliftPct * 100).toFixed(1)}%
+                        </strong>
+                      </div>
+                      <div className="analysis-metric-card">
+                        <div className="analysis-metric-head">
+                          <span>Confidence</span>
+                        </div>
+                        <strong>{(minBetRecommendation.confidence * 100).toFixed(1)}%</strong>
+                      </div>
+                      <div className="analysis-metric-card">
+                        <div className="analysis-metric-head">
+                          <span>Occupancy</span>
+                        </div>
+                        <strong>
+                          {(minBetRecommendation.drivers.occupancyRate * 100).toFixed(0)}%
+                          {" "}
+                          ({minBetRecommendation.drivers.occupancyTrend})
+                        </strong>
+                      </div>
+                      <div className="analysis-metric-card">
+                        <div className="analysis-metric-head">
+                          <span>Bet Headroom</span>
+                        </div>
+                        <strong>{minBetRecommendation.drivers.betHeadroom.toFixed(2)}x</strong>
+                      </div>
+                      <div className="analysis-metric-card">
+                        <div className="analysis-metric-head">
+                          <span>P50 / P75 / P90</span>
+                        </div>
+                        <strong>
+                          {formatAmount(minBetRecommendation.drivers.p50Bet)} /{" "}
+                          {formatAmount(minBetRecommendation.drivers.p75Bet)} /{" "}
+                          {formatAmount(minBetRecommendation.drivers.p90Bet)}
+                        </strong>
+                      </div>
+                      <div className="analysis-metric-card">
+                        <div className="analysis-metric-head">
+                          <span>Low-Bet Share</span>
+                        </div>
+                        <strong>
+                          {(minBetRecommendation.drivers.lowBetShare * 100).toFixed(0)}%
+                        </strong>
+                      </div>
+                    </div>
+                    <p className="small minbet-rationale">{minBetRecommendation.rationale}</p>
+                    {minBetRecommendation.reasons.length > 0 ? (
+                      <ul className="minbet-reasons small">
+                        {minBetRecommendation.reasons.map((reason, idx) => (
+                          <li key={`reason-${idx}`}>{reason}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {Object.keys(minBetRecommendation.drivers.tierMix).length > 0 ? (
+                      <div className="offer-tag-wrap">
+                        {Object.entries(minBetRecommendation.drivers.tierMix).map(([tier, count]) => (
+                          <span className="offer-tag" key={`tier-${tier}`}>
+                            {tier}: {count}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                    <div className="composer-actions">
+                      <button
+                        className="button ghost-button"
+                        type="button"
+                        onClick={() => onRejectMinBet().catch(() => undefined)}
+                        disabled={
+                          minBetActionLoading ||
+                          minBetRecommendation.status !== "Proposed"
+                        }
+                      >
+                        Reject
+                      </button>
+                      <button
+                        className="button"
+                        type="button"
+                        onClick={() => onApplyMinBet().catch(() => undefined)}
+                        disabled={
+                          minBetActionLoading ||
+                          minBetRecommendation.status !== "Proposed" ||
+                          minBetRecommendation.deltaPct === 0
+                        }
+                      >
+                        {minBetActionLoading
+                          ? "Applying..."
+                          : minBetRecommendation.status !== "Proposed"
+                            ? minBetRecommendation.status
+                            : "Approve & Apply"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="small">
+                    Run the optimizer to analyze occupancy trend and bet distribution, and
+                    generate a min-bet recommendation.
+                  </p>
+                )}
+                {minBetHistory.length > 0 ? (
+                  <div className="minbet-history">
+                    <h4 className="small">Recent Recommendations</h4>
+                    {minBetHistory.slice(0, 5).map((row) => (
+                      <div className="minbet-history-row" key={row.recommendationId}>
+                        <span className="small">
+                          {new Date(row.createdAt).toLocaleString()}
+                        </span>
+                        <span className="small">
+                          {formatAmount(row.currentMinBet)} → {formatAmount(row.recommendedMinBet)}
+                          {" "}({row.deltaPct >= 0 ? "+" : ""}
+                          {(row.deltaPct * 100).toFixed(1)}%)
+                        </span>
+                        <span className={`analysis-badge ${
+                          row.status === "Applied"
+                            ? "low"
+                            : row.status === "Rejected" || row.status === "Expired"
+                              ? "high"
+                              : "medium"
+                        }`}>
+                          {row.status}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
               {tableAnalysis ? (
                 <div className="analysis-shell">

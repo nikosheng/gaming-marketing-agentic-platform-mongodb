@@ -1176,6 +1176,94 @@ body {
   line-height: 1.4;
 }
 
+.minbet-shell {
+  margin-top: 14px;
+  border: 1px solid #3a4f7c;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #16243f 0%, #0f1a2f 100%);
+  padding: 12px;
+}
+
+.minbet-head {
+  margin-bottom: 8px;
+}
+
+.minbet-title {
+  margin: 0;
+}
+
+.minbet-card {
+  margin-top: 8px;
+  border: 1px solid #355385;
+  border-radius: 10px;
+  background: #0f1a2f;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.minbet-headline {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.minbet-bet-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.minbet-bet-block strong {
+  font-size: 1.4rem;
+}
+
+.minbet-arrow {
+  font-size: 1.5rem;
+  color: #72a8ff;
+}
+
+.minbet-rationale {
+  background: #14233b;
+  border: 1px solid #2b3f64;
+  border-radius: 8px;
+  padding: 8px;
+  margin: 0;
+}
+
+.minbet-reasons {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.minbet-history {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.minbet-history h4 {
+  margin: 0 0 4px;
+  color: #c9dbf7;
+}
+
+.minbet-history-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid #2b3f64;
+  border-radius: 8px;
+  background: #14233b;
+}
+
 @media (max-width: 1280px) {
   .console-layout {
     grid-template-columns: 1fr;

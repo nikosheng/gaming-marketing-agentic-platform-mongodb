@@ -91,9 +91,30 @@ export async function GET() {
       }
     );
 
+    // Fire-and-forget history snapshot capture for trend analysis.
+    // Errors are swallowed so they never break the heatmap response.
+    const refreshedAt = new Date();
+    if (tablesWithLiveCounts.length > 0) {
+      db.collection(webCollections.tableStateHistory)
+        .insertMany(
+          tablesWithLiveCounts.map((table: Record<string, any>) => ({
+            tableId: table.tableId,
+            refreshedAt,
+            patronCount: Number(table.patronCount ?? 0),
+            avgBetAmount: Number(table.avgBetAmount ?? 0),
+            occupancyRate: Number(table.occupancyRate ?? 0),
+            minBet: Number(table.minBet ?? 0),
+            maxBet: Number(table.maxBet ?? 0),
+            status: String(table.status ?? "Open"),
+          })),
+          { ordered: false }
+        )
+        .catch(() => undefined);
+    }
+
     return NextResponse.json({
       ok: true,
-      refreshedAt: new Date().toISOString(),
+      refreshedAt: refreshedAt.toISOString(),
       metrics,
       tables: tablesWithLiveCounts,
     });

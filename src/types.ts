@@ -273,3 +273,77 @@ export interface ChatMessage {
   references: string[];
   createdAt: Date;
 }
+
+export type MinBetRecommendationStatus =
+  | "Proposed"
+  | "Approved"
+  | "Applied"
+  | "Rejected"
+  | "Expired";
+export type OccupancyTrend = "Rising" | "Stable" | "Falling";
+export type MinBetChangeSource = "Agent" | "Manual";
+
+export interface TableStateHistory {
+  _id?: ObjectId;
+  tableId: string;
+  refreshedAt: Date;
+  patronCount: number;
+  avgBetAmount: number;
+  occupancyRate: number;
+  minBet: number;
+  maxBet: number;
+  status: TableStatus;
+}
+
+export interface MinBetCandidate {
+  minBet: number;
+  deltaPct: number;
+  expectedRevenuePct: number;
+  estimatedRetentionPct: number;
+}
+
+export interface MinBetRecommendationDrivers {
+  occupancyTrend: OccupancyTrend;
+  occupancyVelocity: number;
+  occupancyRate: number;
+  betHeadroom: number;
+  lowBetShare: number;
+  p50Bet: number;
+  p75Bet: number;
+  p90Bet: number;
+  tierMix: Partial<Record<PatronTier, number>>;
+  zone: string;
+  gameType: TableGameType;
+}
+
+export interface MinBetRecommendation {
+  _id?: ObjectId;
+  recommendationId: string;
+  tableId: string;
+  runId: string;
+  currentMinBet: number;
+  recommendedMinBet: number;
+  deltaPct: number;
+  expectedRevenueUpliftPct: number;
+  confidence: number;
+  rationale: string;
+  reasons: string[];
+  drivers: MinBetRecommendationDrivers;
+  candidates: MinBetCandidate[];
+  status: MinBetRecommendationStatus;
+  createdAt: Date;
+  expiresAt: Date;
+  reviewedBy?: string;
+  reviewedAt?: Date;
+}
+
+export interface MinBetAudit {
+  _id?: ObjectId;
+  tableId: string;
+  oldMinBet: number;
+  newMinBet: number;
+  source: MinBetChangeSource;
+  recommendationId?: string;
+  actorId: string;
+  at: Date;
+}
