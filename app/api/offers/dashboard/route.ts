@@ -48,23 +48,23 @@ export async function GET() {
         .limit(40)
         .toArray(),
       db
-        .collection(webCollections.activities)
-        .find(
-          {},
+        .collection(webCollections.patrons)
+        .aggregate([
+          { $unwind: "$activities" },
           {
-            projection: {
+            $project: {
               _id: 0,
-              eventId: 1,
-              patronId: 1,
-              activityType: 1,
-              source: 1,
-              amount: 1,
-              pointsDelta: 1,
-              eventTime: 1,
+              eventId: "$activities.eventId",
+              patronId: "$patronId",
+              activityType: "$activities.activityType",
+              source: "$activities.source",
+              amount: "$activities.amount",
+              pointsDelta: "$activities.pointsDelta",
+              eventTime: "$activities.eventTime",
             },
-          }
-        )
-        .sort({ eventTime: -1 })
+          },
+          { $sort: { eventTime: -1 } },
+        ])
         .limit(40)
         .toArray(),
     ]);

@@ -43,6 +43,42 @@ type PatronResponse = {
   patrons: PatronRow[];
 };
 
+type TableAnalysisResponse = {
+  ok: boolean;
+  tableId: string;
+  analyzedAt: string;
+  summary: {
+    totalPatrons: number;
+    highPotentialCount: number;
+    mediumPotentialCount: number;
+    avgPotentialScore: number;
+    bestTargetPatronId: string | null;
+  };
+  rankedPatrons: Array<{
+    patronId: string;
+    maskedName: string;
+    tier: string;
+    adt: number;
+    pointsBalance: number;
+    sessionBetAmount: number;
+    currentStackEstimate: number;
+    behaviorTags: string[];
+    lossPotentialScore: number;
+    lossPotentialLabel: "High" | "Medium" | "Low";
+    confidence: number;
+    expectedLossRange: { min: number; max: number };
+    recommendation: string;
+    reasons: string[];
+    suggestedOffers: Array<{
+      offerId: string;
+      title: string;
+      offerType: string;
+      score: number;
+    }>;
+  }>;
+  engine: string;
+};
+
 type OfferDashboardResponse = {
   ok: boolean;
   summary: {
@@ -100,16 +136,244 @@ type OfferGenerationStats = {
   gameBreakdown: Array<{ label: string; value: number }>;
 };
 
+type RiskCasePayload = {
+  caseId: string;
+  patronId: string;
+  tableId: string;
+  status: string;
+  riskLevel: "Low" | "Medium" | "High" | "Critical";
+  escalationTier: "Standard" | "Senior";
+  lossChasingAssessment: {
+    score: number;
+    label: string;
+    confidence: number;
+    drivers: string[];
+    explanation: string;
+  };
+  financialAssessment: {
+    amlRiskScore: number;
+    creditBand: string;
+    sourceOfFundsRisk: string;
+    confidence: number;
+    checklist: Array<{ key: string; passed: boolean; notes?: string }>;
+    analystNotes: string;
+  };
+  timeline: Array<{
+    eventType: string;
+    actorType: string;
+    actorId: string;
+    payload: Record<string, unknown>;
+    createdAt: string;
+  }>;
+  nodeStates?: Array<{
+    nodeName: string;
+    status: "Pending" | "Running" | "Completed" | "Failed";
+    startedAt?: string;
+    completedAt?: string;
+  }>;
+  adminReview?: {
+    decision: string;
+    rationale: string;
+    createdAt: string;
+  };
+};
+
+type PRAssignmentPayload = {
+  assignmentId: string;
+  prAgentId: string;
+  fitScore: number;
+  status: string;
+  assignedAt: string;
+};
+
+type ConsoleSection = "patron-eyes" | "offer-catalog";
+
 const promptTemplates = [
   "Create a premium hotel offer for Platinum baccarat patrons with ADT >= 10000 active within 7 days.",
   "Offer: Weekend Show Bundle. Build a show ticket offer for Diamond patrons with table bet activity in last 14 days.",
   "Create a points limited-time offer for Gold and Platinum patrons with points >= 20000 and chip exchange >= 8000.",
 ];
 
+const metricHelpText = {
+  score:
+    "Loss Potential Score is a weighted signal from session bet intensity, ADT, stack estimate, points balance, and behavior risk. Higher means stronger potential to lose more.",
+  confidence:
+    "Confidence indicates signal strength quality, driven by behavior-risk and betting intensity. High (80-100%): Aggressive + high bets. Med (70-80%): Solid history + avg session. Low (60-70%): Conservative + small bets.",
+  expectedLoss:
+    "Expected Loss is an estimated range from current session bet amount adjusted by tier loss factor, shown as a likely min-max window for this session.",
+};
+
+function SectionIcon({ section }: { section: ConsoleSection }) {
+  if (section === "patron-eyes") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          d="M2 12s3.8-6 10-6 10 6 10 6-3.8 6-10 6S2 12 2 12zm10 3.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7z"
+          fill="currentColor"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm2 3v2h12V7H6zm0 5v2h8v-2H6z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function normalizeRiskTone(value: string): "low" | "medium" | "high" | "critical" {
+  const text = value.toLowerCase();
+  if (text.includes("critical")) return "critical";
+  if (text.includes("high") || text.includes("likely")) return "high";
+  if (text.includes("medium") || text.includes("borderline")) return "medium";
+  return "low";
+}
+
+function getChecklistDisplay(
+  item: { key: string; passed: boolean; notes?: string },
+  financial: { amlRiskScore: number; sourceOfFundsRisk: string; creditBand: string }
+) {
+  switch (item.key) {
+    case "incomePatternConsistent":
+      return {
+        title: "Income Pattern Consistency",
+        reason: item.passed
+          ? "Current chip buy-in pattern remains within the patron's historical variance baseline."
+          : "Recent buy-in variance exceeds baseline threshold, indicating possible source-of-funds inconsistency.",
+        logic:
+          "Rule: HighVariance = (Current Session Buy-In > Historical Max Buy-In * 2.0). Checklist passes when HighVariance is false.",
+      };
+    case "largeCashSpike":
+      return {
+        title: "Large Cash Spike Detection",
+        reason: item.passed
+          ? "No unusual short-interval cashout spikes are detected versus normal historical cadence."
+          : "Cashout frequency or amount is unusually high compared with the patron's normal profile.",
+        logic:
+          "AML contribution: FrequentCashout adds +0.28 if detected, otherwise +0.07. This item passes when FrequentCashout is false.",
+      };
+    case "chipExchangeAnomaly":
+      return {
+        title: "Chip Exchange Behavior Consistency",
+        reason: item.passed
+          ? "Chip exchange pattern aligns with typical play behavior and normal promotion usage."
+          : "Promotion-led churn or exchange irregularity may mask source-of-funds behavior.",
+        logic:
+          "AML contribution: PromoSensitive adds +0.12 if detected, otherwise +0.05. This item passes when PromoSensitive is false.",
+      };
+    case "highRiskSourceSignal":
+      return {
+        title: "Source of Funds High-Risk Signal",
+        reason: item.passed
+          ? "Source-of-funds risk score is below the high-risk escalation threshold."
+          : "Source-of-funds model indicates high risk and requires senior escalation.",
+        logic: `Current AML Risk Score = ${(financial.amlRiskScore * 100).toFixed(
+          1
+        )}%. Thresholds: High >= 68%, Medium 40-67%, Low < 40%. Current label: ${
+          financial.sourceOfFundsRisk
+        }.`,
+      };
+    case "kycProfileFresh":
+      return {
+        title: "KYC Profile Freshness",
+        reason: item.passed
+          ? "KYC profile is considered valid and up-to-date for this internal workflow stage."
+          : "KYC profile freshness appears insufficient and requires profile refresh verification.",
+        logic:
+          "MVP rule: KYC freshness is currently assumed valid in internal flow (default pass). Future phase should bind to actual KYC expiry timestamp checks.",
+      };
+    default:
+      return {
+        title: item.key,
+        reason: item.notes ?? "No additional rationale available.",
+        logic: "No formal calculation logic configured for this checklist key.",
+      };
+  }
+}
+
+type AgentGraphStep = {
+  id: string;
+  title: string;
+  detail: string;
+  status: "Pending" | "Running" | "Completed";
+};
+
+function getAgentStepStatus(
+  riskCase: RiskCasePayload,
+  nodeName: string
+): "Pending" | "Running" | "Completed" {
+  const node = riskCase.nodeStates?.find((n) => n.nodeName === nodeName);
+  if (!node) return "Pending";
+  if (node.status === "Completed") return "Completed";
+  if (node.status === "Running") return "Running";
+  return "Pending";
+}
+
+function buildLossAgentSteps(riskCase: RiskCasePayload): AgentGraphStep[] {
+  const hasLossEvent = riskCase.timeline.some((t) => t.eventType === "LossAssessmentCompleted");
+  const hasDrivers = riskCase.lossChasingAssessment.drivers.length > 0;
+  return [
+    {
+      id: "loss-data",
+      title: "Session Context Loaded",
+      detail: "Collect ADT, session bet amount, and behavior tags for scoring input.",
+      status: getAgentStepStatus(riskCase, "initialize_case"),
+    },
+    {
+      id: "loss-signals",
+      title: "Behavior Signals Computed",
+      detail: "Compute ADT signal, session intensity, and behavior pattern weights.",
+      status: hasLossEvent ? "Completed" : getAgentStepStatus(riskCase, "evaluate_loss_chasing"),
+    },
+    {
+      id: "loss-score",
+      title: "Loss-Chasing Score Emitted",
+      detail: `Final score ${(riskCase.lossChasingAssessment.score * 100).toFixed(1)}% with label ${
+        riskCase.lossChasingAssessment.label
+      }.`,
+      status: hasDrivers ? "Completed" : "Pending",
+    },
+  ];
+}
+
+function buildAmlAgentSteps(riskCase: RiskCasePayload): AgentGraphStep[] {
+  const hasFinancialEvent = riskCase.timeline.some((t) => t.eventType === "FinancialAssessmentCompleted");
+  const hasChecklist = riskCase.financialAssessment.checklist.length > 0;
+  const hasRiskBand = Boolean(riskCase.financialAssessment.sourceOfFundsRisk);
+  return [
+    {
+      id: "aml-data",
+      title: "Financial Profile Loaded",
+      detail: "Load points balance, risk flags, and ADT profile for AML scoring.",
+      status: getAgentStepStatus(riskCase, "initialize_case"),
+    },
+    {
+      id: "aml-rules",
+      title: "AML Rules Executed",
+      detail: "Apply variance, cashout cadence, promo sensitivity, and points-balance logic.",
+      status: hasFinancialEvent ? "Completed" : getAgentStepStatus(riskCase, "evaluate_financial_credit_aml"),
+    },
+    {
+      id: "aml-output",
+      title: "SoF Risk & Checklist Generated",
+      detail: `AML score ${(riskCase.financialAssessment.amlRiskScore * 100).toFixed(1)}% -> ${
+        riskCase.financialAssessment.sourceOfFundsRisk
+      } risk.`,
+      status: hasChecklist && hasRiskBand ? "Completed" : "Pending",
+    },
+  ];
+}
+
 export default function DashboardClient() {
+  const [activeSection, setActiveSection] = useState<ConsoleSection>("patron-eyes");
   const [heatmap, setHeatmap] = useState<HeatmapResponse | null>(null);
   const [selectedTableId, setSelectedTableId] = useState<string>("");
   const [patrons, setPatrons] = useState<PatronResponse | null>(null);
+  const [tableAnalysis, setTableAnalysis] = useState<TableAnalysisResponse | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState<boolean>(false);
   const [offerDashboard, setOfferDashboard] = useState<OfferDashboardResponse | null>(null);
   const [generatePatronId, setGeneratePatronId] = useState<string>("");
   const [generatedOffers, setGeneratedOffers] = useState<
@@ -126,6 +390,13 @@ export default function DashboardClient() {
         "Tell me the offer and patron criteria. Example: Create a hotel offer for Gold/Platinum baccarat patrons with ADT >= 5000 active within 7 days.",
     },
   ]);
+  const [riskCaseLoading, setRiskCaseLoading] = useState<boolean>(false);
+  const [riskCaseModalOpen, setRiskCaseModalOpen] = useState<boolean>(false);
+  const [riskCase, setRiskCase] = useState<RiskCasePayload | null>(null);
+  const [prAssignment, setPrAssignment] = useState<PRAssignmentPayload | null>(null);
+  const [riskCasePatronId, setRiskCasePatronId] = useState<string>("");
+  const [adminDecision, setAdminDecision] = useState<"Approve" | "Reject" | "RequestMoreInfo">("Approve");
+  const [adminRationale, setAdminRationale] = useState<string>("");
   const [error, setError] = useState<string>("");
 
   useEffect(() => {
@@ -154,6 +425,7 @@ export default function DashboardClient() {
 
   useEffect(() => {
     if (!selectedTableId) return;
+    setTableAnalysis(null);
     async function fetchPatrons() {
       const res = await fetch(`/api/tables/${selectedTableId}/patrons`, { cache: "no-store" });
       const data = (await res.json()) as PatronResponse;
@@ -239,116 +511,373 @@ export default function DashboardClient() {
     }
   }
 
+  async function onAnalyzeTable() {
+    if (!selectedTableId || analysisLoading) return;
+    setAnalysisLoading(true);
+    try {
+      const res = await fetch(`/api/tables/${selectedTableId}/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = (await res.json()) as TableAnalysisResponse & { error?: string };
+      if (!data.ok) {
+        setError(data.error ?? "Failed to analyze table patrons.");
+        return;
+      }
+      setTableAnalysis(data);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setAnalysisLoading(false);
+    }
+  }
+
+  async function onStartRiskReview(patronId: string) {
+    if (!selectedTableId) return;
+    setRiskCaseLoading(true);
+    setRiskCasePatronId(patronId);
+    setRiskCaseModalOpen(true);
+    try {
+      const res = await fetch(`/api/patrons/${patronId}/risk-case`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tableId: selectedTableId }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        case?: RiskCasePayload;
+        error?: string;
+      };
+      if (!data.ok || !data.case) {
+        setError(data.error ?? "Failed to start risk review.");
+        return;
+      }
+      setRiskCase(data.case);
+
+      const latestRes = await fetch(`/api/patrons/${patronId}/risk-case/latest`, { cache: "no-store" });
+      const latestData = (await latestRes.json()) as {
+        ok: boolean;
+        case?: RiskCasePayload;
+        assignment?: PRAssignmentPayload | null;
+      };
+      if (latestData.ok && latestData.case) {
+        setRiskCase(latestData.case);
+        setPrAssignment(latestData.assignment ?? null);
+      } else {
+        setPrAssignment(null);
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setRiskCaseLoading(false);
+    }
+  }
+
+  async function onSubmitAdminDecision() {
+    if (!riskCase?.caseId || !adminRationale.trim()) return;
+    setRiskCaseLoading(true);
+    try {
+      const res = await fetch(`/api/risk-cases/${riskCase.caseId}/admin-decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          decision: adminDecision,
+          rationale: adminRationale.trim(),
+        }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        case?: RiskCasePayload;
+        assignment?: PRAssignmentPayload | null;
+        error?: string;
+      };
+      if (!data.ok || !data.case) {
+        setError(data.error ?? "Failed to submit admin decision.");
+        return;
+      }
+      setRiskCase(data.case);
+      setPrAssignment(data.assignment ?? null);
+      setAdminRationale("");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setRiskCaseLoading(false);
+    }
+  }
+
   return (
-    <main className="modern-page">
-      <header className="hero">
-        <div>
-          <h1 className="hero-title">Casino Patron Marketing Workspace</h1>
-          <p className="hero-subtitle">
-            Real-time floor intelligence with a modern offer agent that builds and validates offers from
-            natural-language strategy prompts.
-          </p>
+    <main className="modern-page console-layout">
+      <aside className="console-sidebar">
+        <div className="console-brand">
+          <h1>Management Console</h1>
+          <p>Marketing Ops</p>
         </div>
-        <div className="hero-metrics">
-          <span className="hero-chip">Tables {heatmap?.metrics.totalTables ?? "-"}</span>
-          <span className="hero-chip">Patrons {heatmap?.metrics.totalPatrons ?? "-"}</span>
-          <span className="hero-chip">Offers {offerDashboard?.summary.offerCount ?? "-"}</span>
-        </div>
-      </header>
-      {error ? <p className="error-banner">{error}</p> : null}
-      <div className="workspace-grid">
-        <section className="ops-column">
-          <article className="panel-card">
-            <h2 className="panel-title">Table Heatmap</h2>
-            <div className="metric-row">
-              <span className="metric-chip">Hot {heatmap?.metrics.hotTables ?? "-"}</span>
-              <span className="metric-chip">Open/Busy {heatmap?.metrics.openOrBusyTables ?? "-"}</span>
-              <span className="metric-chip">Refresh 1m</span>
-            </div>
-            <div className="tables">
-              {(heatmap?.tables ?? []).map((table) => (
-                <button
-                  key={table.tableId}
-                  className={`table-btn ${selectedTableId === table.tableId ? "active" : ""}`}
-                  onClick={() => setSelectedTableId(table.tableId)}
-                >
-                  <div className="table-head">{table.tableName}</div>
-                  <div className="muted">{table.gameType}</div>
-                  <div className="muted">Zone {table.zone}</div>
-                  <div className={table.occupancyRate > 0.8 ? "hot" : "muted"}>
-                    Occupancy {Math.round(table.occupancyRate * 100)}%
-                  </div>
-                  <div className="muted">Patrons {table.patronCount}</div>
-                </button>
-              ))}
-            </div>
-          </article>
-          <article className="panel-card">
-            <h2 className="panel-title">Table Drill-Down: {selectedTableId || "-"}</h2>
-            <div className="patron-list">
-              {(patrons?.patrons ?? []).map((patron) => (
-                <div className="patron-row" key={patron.patronId}>
-                  <div className="patron-head">
-                    <strong>{patron.patronId}</strong>
-                    <span className="small">{patron.tier}</span>
-                  </div>
-                  <div className="split small">
-                    <span>Bet {formatAmount(patron.sessionBetAmount)}</span>
-                    <span>ADT {formatAmount(patron.adt)}</span>
-                    <span>Points {formatAmount(patron.pointsBalance)}</span>
-                    <span>Stack {formatAmount(patron.currentStackEstimate)}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </article>
-          <article className="panel-card">
-            <h2 className="panel-title">Offer Dashboard</h2>
-            <div className="metric-row">
-              <span className="metric-chip">
-                Recommendations {offerDashboard?.summary.recommendationCount ?? "-"}
-              </span>
-              <span className="metric-chip">
-                Activities {offerDashboard?.summary.recentActivityCount ?? "-"}
-              </span>
-            </div>
-            <div className="offer-list">
-              {(offerDashboard?.offers ?? []).slice(0, 8).map((offer) => (
-                <div className="offer-row" key={offer.offerId}>
-                  <strong>{offer.title}</strong>
-                  <div className="small">
-                    {offer.offerType} | {offer.status} | Priority {offer.priority}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </article>
-          <article className="panel-card">
-            <h2 className="panel-title">Quick Offer Lookup</h2>
-            <p className="small">Generate top matches for one patron profile.</p>
-            <div className="actions">
-              <input
-                className="input"
-                value={generatePatronId}
-                onChange={(e) => setGeneratePatronId(e.target.value)}
-                placeholder="Patron ID (e.g. P-000001)"
-              />
-              <button className="button" onClick={onGenerateOffers}>
-                Generate
-              </button>
-            </div>
-            {generatedOffers.map((item) => (
-              <div className="offer-row" key={`${item.offerId}-${item.title}`}>
-                <strong>{item.title}</strong>
-                <div className="small">
-                  {item.offerId} | {item.offerType} | score {item.score.toFixed(4)}
-                </div>
+        <button
+          className={`console-nav-btn ${activeSection === "patron-eyes" ? "active" : ""}`}
+          onClick={() => setActiveSection("patron-eyes")}
+          type="button"
+        >
+          <span className="console-nav-icon">
+            <SectionIcon section="patron-eyes" />
+          </span>
+          <span>Patron Eyes</span>
+        </button>
+        <button
+          className={`console-nav-btn ${activeSection === "offer-catalog" ? "active" : ""}`}
+          onClick={() => setActiveSection("offer-catalog")}
+          type="button"
+        >
+          <span className="console-nav-icon">
+            <SectionIcon section="offer-catalog" />
+          </span>
+          <span>Offer Catalog</span>
+        </button>
+      </aside>
+
+      <section className="console-content">
+        <header className="hero">
+          <div>
+            <h2 className="hero-title">
+              {activeSection === "patron-eyes" ? "Patron Eyes" : "Offer Catalog"}
+            </h2>
+            <p className="hero-subtitle">
+              {activeSection === "patron-eyes"
+                ? "Monitor live table activity, drill into active patrons, and run instant loss-potential analysis."
+                : "Manage promotion inventory, run quick lookups, and generate strategy-ready offers with AI support."}
+            </p>
+          </div>
+          <div className="hero-metrics">
+            <span className="hero-chip">Tables {heatmap?.metrics.totalTables ?? "-"}</span>
+            <span className="hero-chip">Patrons {heatmap?.metrics.totalPatrons ?? "-"}</span>
+            <span className="hero-chip">Offers {offerDashboard?.summary.offerCount ?? "-"}</span>
+          </div>
+        </header>
+        {error ? <p className="error-banner">{error}</p> : null}
+
+        {activeSection === "patron-eyes" ? (
+          <div className="section-stack">
+            <article className="panel-card">
+              <h2 className="panel-title">Table Heatmap</h2>
+              <div className="metric-row">
+                <span className="metric-chip">Hot {heatmap?.metrics.hotTables ?? "-"}</span>
+                <span className="metric-chip">Open/Busy {heatmap?.metrics.openOrBusyTables ?? "-"}</span>
+                <span className="metric-chip">Refresh 1m</span>
               </div>
-            ))}
-          </article>
-        </section>
-        <section className="agent-column">
-          <article className="agent-shell">
+              <div className="tables">
+                {(heatmap?.tables ?? []).map((table) => (
+                  <button
+                    key={table.tableId}
+                    className={`table-btn ${selectedTableId === table.tableId ? "active" : ""}`}
+                    onClick={() => setSelectedTableId(table.tableId)}
+                  >
+                    <div className="table-head">
+                      <span>{table.tableName}</span>
+                      <span className="table-patron-badge">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" width="12" height="12">
+                          <path
+                            d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"
+                            fill="currentColor"
+                          />
+                        </svg>
+                        {table.patronCount}
+                      </span>
+                    </div>
+                    <div className="muted">{table.gameType}</div>
+                    <div className="muted">Zone {table.zone}</div>
+                    <div
+                      className={`table-occupancy-bar ${
+                        table.occupancyRate >= 0.8
+                          ? "high"
+                          : table.occupancyRate >= 0.5
+                            ? "medium"
+                            : "low"
+                      }`}
+                    >
+                      <div
+                        className="table-occupancy-fill"
+                        style={{ width: `${Math.round(table.occupancyRate * 100)}%` }}
+                      />
+                    </div>
+                    <div className="table-occupancy-label">
+                      Occupancy {Math.round(table.occupancyRate * 100)}%
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </article>
+
+            <article className="panel-card">
+              <div className="drilldown-head">
+                <h2 className="panel-title">Table Drill-Down: {selectedTableId || "-"}</h2>
+                <button className="button analysis-button" onClick={onAnalyzeTable} type="button">
+                  {analysisLoading ? "Analyzing..." : "Start Loss Potential Agent"}
+                </button>
+              </div>
+              <div className="patron-list">
+                {(patrons?.patrons ?? []).map((patron) => (
+                  <div className="patron-row" key={patron.patronId}>
+                    <div className="patron-head">
+                      <strong>{patron.patronId}</strong>
+                      <span className="small">{patron.tier}</span>
+                    </div>
+                    <div className="split small">
+                      <span>Bet {formatAmount(patron.sessionBetAmount)}</span>
+                      <span>ADT {formatAmount(patron.adt)}</span>
+                      <span>Points {formatAmount(patron.pointsBalance)}</span>
+                      <span>Stack {formatAmount(patron.currentStackEstimate)}</span>
+                    </div>
+                    <div className="patron-actions">
+                      <button
+                        className="button risk-review-btn"
+                        type="button"
+                        onClick={() => onStartRiskReview(patron.patronId).catch(() => undefined)}
+                      >
+                        Start Risk Review
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {tableAnalysis ? (
+                <div className="analysis-shell">
+                  <div className="analysis-summary">
+                    <span className="metric-chip">Analyzed {tableAnalysis.summary.totalPatrons}</span>
+                    <span className="metric-chip">High Potential {tableAnalysis.summary.highPotentialCount}</span>
+                    <span className="metric-chip">Medium {tableAnalysis.summary.mediumPotentialCount}</span>
+                    <span className="metric-chip">
+                      Avg Score {(tableAnalysis.summary.avgPotentialScore * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                  {tableAnalysis.summary.bestTargetPatronId ? (
+                    <p className="small analysis-lead">
+                      Best immediate target: {tableAnalysis.summary.bestTargetPatronId}
+                    </p>
+                  ) : (
+                    <p className="small analysis-lead">No active patrons available for scoring.</p>
+                  )}
+                  <div className="analysis-list">
+                    {tableAnalysis.rankedPatrons.slice(0, 8).map((patron) => (
+                      <div className="analysis-row" key={`analysis-${patron.patronId}`}>
+                        <div className="analysis-row-head">
+                          <strong>{patron.patronId}</strong>
+                          <span className={`analysis-badge ${patron.lossPotentialLabel.toLowerCase()}`}>
+                            {patron.lossPotentialLabel}
+                          </span>
+                        </div>
+                        <div className="analysis-bar-track">
+                          <div
+                            className="analysis-bar-fill"
+                            style={{ width: `${Math.round(patron.lossPotentialScore * 100)}%` }}
+                          />
+                        </div>
+                        <div className="analysis-metric-grid">
+                          <div className="analysis-metric-card">
+                            <div className="analysis-metric-head">
+                              <span>Score</span>
+                              <span className="metric-info" data-tip={metricHelpText.score} aria-label="Score info">
+                                i
+                              </span>
+                            </div>
+                            <strong>{(patron.lossPotentialScore * 100).toFixed(1)}%</strong>
+                          </div>
+                          <div className="analysis-metric-card">
+                            <div className="analysis-metric-head">
+                              <span>Confidence</span>
+                              <span
+                                className="metric-info"
+                                data-tip={metricHelpText.confidence}
+                                aria-label="Confidence info"
+                              >
+                                i
+                              </span>
+                            </div>
+                            <strong>{(patron.confidence * 100).toFixed(1)}%</strong>
+                          </div>
+                          <div className="analysis-metric-card">
+                            <div className="analysis-metric-head">
+                              <span>Expected Loss</span>
+                              <span
+                                className="metric-info"
+                                data-tip={metricHelpText.expectedLoss}
+                                aria-label="Expected loss info"
+                              >
+                                i
+                              </span>
+                            </div>
+                            <strong>
+                              {formatAmount(patron.expectedLossRange.min)}-{formatAmount(patron.expectedLossRange.max)}
+                            </strong>
+                          </div>
+                        </div>
+                        <p className="small">{patron.recommendation}</p>
+                        {patron.suggestedOffers.length > 0 ? (
+                          <div className="offer-tag-wrap">
+                            {patron.suggestedOffers.map((offer) => (
+                              <span className="offer-tag" key={`${patron.patronId}-${offer.offerId}`}>
+                                {offer.offerType} | {offer.title} ({(offer.score * 100).toFixed(1)}%)
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="small">No offer suggestion available.</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </article>
+          </div>
+        ) : (
+          <div className="section-grid">
+            <div className="catalog-left">
+              <article className="panel-card">
+                <h2 className="panel-title">Offer Dashboard</h2>
+                <div className="metric-row">
+                  <span className="metric-chip">
+                    Recommendations {offerDashboard?.summary.recommendationCount ?? "-"}
+                  </span>
+                  <span className="metric-chip">Activities {offerDashboard?.summary.recentActivityCount ?? "-"}</span>
+                </div>
+                <div className="offer-list">
+                  {(offerDashboard?.offers ?? []).slice(0, 8).map((offer) => (
+                    <div className="offer-row" key={offer.offerId}>
+                      <strong>{offer.title}</strong>
+                      <div className="small">
+                        {offer.offerType} | {offer.status} | Priority {offer.priority}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="panel-card">
+                <h2 className="panel-title">Quick Offer Lookup</h2>
+                <p className="small">Generate top matches for one patron profile.</p>
+                <div className="actions">
+                  <input
+                    className="input"
+                    value={generatePatronId}
+                    onChange={(e) => setGeneratePatronId(e.target.value)}
+                    placeholder="Patron ID (e.g. P-000001)"
+                  />
+                  <button className="button" onClick={onGenerateOffers}>
+                    Generate
+                  </button>
+                </div>
+                {generatedOffers.map((item) => (
+                  <div className="offer-row" key={`${item.offerId}-${item.title}`}>
+                    <strong>{item.title}</strong>
+                    <div className="small">
+                      {item.offerId} | {item.offerType} | score {item.score.toFixed(4)}
+                    </div>
+                  </div>
+                ))}
+              </article>
+            </div>
+
+            <section className="agent-column">
+              <article className="agent-shell">
             <div className="agent-topbar">
               <div>
                 <h2 className="panel-title">Offer Agent</h2>
@@ -484,24 +1013,240 @@ export default function DashboardClient() {
                 </div>
               </div>
             ) : null}
-            <div className="recommendation-strip">
-              <h3>Latest Recommendations</h3>
-              <div className="recommendation-list">
-                {topRecommendations.map((rec) => (
-                  <div className="recommendation-card" key={rec.recommendationId}>
-                    <strong>
-                      {rec.patronId} - {rec.offerId}
-                    </strong>
-                    <span>
-                      {rec.status} | score {rec.relevanceScore.toFixed(3)} | conf {rec.confidence.toFixed(3)}
-                    </span>
-                  </div>
-                ))}
+              <div className="recommendation-strip">
+                <h3>Latest Recommendations</h3>
+                <div className="recommendation-list">
+                  {topRecommendations.map((rec) => (
+                    <div className="recommendation-card" key={rec.recommendationId}>
+                      <strong>
+                        {rec.patronId} - {rec.offerId}
+                      </strong>
+                      <span>
+                        {rec.status} | score {rec.relevanceScore.toFixed(3)} | conf {rec.confidence.toFixed(3)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
+              </article>
+            </section>
+          </div>
+        )}
+      </section>
+      {riskCaseModalOpen ? (
+        <div className="risk-modal-overlay" onClick={() => setRiskCaseModalOpen(false)} role="presentation">
+          <div className="risk-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="risk-modal-head">
+              <div>
+                <h3>Patron Risk Workflow</h3>
+                <p className="small">
+                  {riskCasePatronId || riskCase?.patronId} | Case {riskCase?.caseId ?? "Initializing..."}
+                </p>
+              </div>
+              <button className="button ghost-button" onClick={() => setRiskCaseModalOpen(false)} type="button">
+                Close
+              </button>
             </div>
-          </article>
-        </section>
-      </div>
+
+            {riskCaseLoading ? <p className="small">Loading workflow...</p> : null}
+            {riskCase ? (
+              <div className="risk-modal-body">
+                {(() => {
+                  const overallTone = normalizeRiskTone(riskCase.riskLevel);
+                  const lossTone = normalizeRiskTone(riskCase.lossChasingAssessment.label);
+                  const amlTone = normalizeRiskTone(riskCase.financialAssessment.sourceOfFundsRisk);
+                  return (
+                    <>
+                <div className="risk-chip-row">
+                  <span className={`analysis-badge risk-level-chip risk-${overallTone}`}>
+                    {riskCase.riskLevel} Risk
+                  </span>
+                  <span className="metric-chip">Status {riskCase.status}</span>
+                  <span className="metric-chip">Escalation {riskCase.escalationTier}</span>
+                </div>
+
+                <div className="risk-cards-grid">
+                  <div className={`analysis-metric-card risk-score-card risk-${lossTone}`}>
+                    <div className="analysis-metric-head">
+                      <span>Loss Chasing Agent</span>
+                    </div>
+                    <strong>{(riskCase.lossChasingAssessment.score * 100).toFixed(1)}%</strong>
+                    <p className="small risk-score-label">Label {riskCase.lossChasingAssessment.label}</p>
+                    <p className="small">{riskCase.lossChasingAssessment.explanation}</p>
+                    <p className="small">Confidence {(riskCase.lossChasingAssessment.confidence * 100).toFixed(1)}%</p>
+                  </div>
+                  <div className={`analysis-metric-card risk-score-card risk-${amlTone}`}>
+                    <div className="analysis-metric-head">
+                      <span>Financial / AML Agent</span>
+                    </div>
+                    <strong>{(riskCase.financialAssessment.amlRiskScore * 100).toFixed(1)}%</strong>
+                    <p className="small risk-score-label">
+                      Source Risk {riskCase.financialAssessment.sourceOfFundsRisk}
+                    </p>
+                    <p className="small">
+                      Credit {riskCase.financialAssessment.creditBand} | SoF Risk{" "}
+                      {riskCase.financialAssessment.sourceOfFundsRisk}
+                    </p>
+                    <p className="small">{riskCase.financialAssessment.analystNotes}</p>
+                  </div>
+                </div>
+
+                <div className="risk-agent-graph-grid">
+                  <div className="risk-agent-graph-card">
+                    <h4>Loss Chasing Agent Graph</h4>
+                    <div className="risk-agent-steps">
+                      {buildLossAgentSteps(riskCase).map((step, idx, arr) => (
+                        <div className="risk-agent-step" key={step.id}>
+                          <div className={`risk-agent-node ${step.status.toLowerCase()}`}>
+                            <span>{idx + 1}</span>
+                          </div>
+                          <div className="risk-agent-step-body">
+                            <div className="risk-agent-step-head">
+                              <strong>{step.title}</strong>
+                              <span className={`analysis-badge risk-level-chip ${step.status === "Completed" ? "risk-low" : step.status === "Running" ? "risk-medium" : "risk-high"}`}>
+                                {step.status}
+                              </span>
+                            </div>
+                            <p className="small">{step.detail}</p>
+                          </div>
+                          {idx < arr.length - 1 ? <div className="risk-agent-connector" /> : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="risk-agent-graph-card">
+                    <h4>Financial / AML Agent Graph</h4>
+                    <div className="risk-agent-steps">
+                      {buildAmlAgentSteps(riskCase).map((step, idx, arr) => (
+                        <div className="risk-agent-step" key={step.id}>
+                          <div className={`risk-agent-node ${step.status.toLowerCase()}`}>
+                            <span>{idx + 1}</span>
+                          </div>
+                          <div className="risk-agent-step-body">
+                            <div className="risk-agent-step-head">
+                              <strong>{step.title}</strong>
+                              <span className={`analysis-badge risk-level-chip ${step.status === "Completed" ? "risk-low" : step.status === "Running" ? "risk-medium" : "risk-high"}`}>
+                                {step.status}
+                              </span>
+                            </div>
+                            <p className="small">{step.detail}</p>
+                          </div>
+                          {idx < arr.length - 1 ? <div className="risk-agent-connector" /> : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="risk-checklist">
+                  <h4>AML Checklist</h4>
+                  {riskCase.financialAssessment.checklist.map((item) => (
+                    (() => {
+                      const display = getChecklistDisplay(item, riskCase.financialAssessment);
+                      return (
+                        <details className="risk-check-accordion" key={item.key}>
+                          <summary className="risk-check-summary">
+                            <span className={`analysis-badge risk-level-chip ${item.passed ? "risk-low" : "risk-high"}`}>
+                              {item.passed ? "Pass" : "Flag"}
+                            </span>
+                            <strong>{display.title}</strong>
+                            <span className="small risk-check-expand-hint">Expand</span>
+                          </summary>
+                          <div className="risk-check-content">
+                            <p className="small">
+                              {item.passed ? "Why Passed: " : "Why Flagged: "}
+                              {display.reason}
+                            </p>
+                            <div className="risk-calc-box">
+                              <span className="risk-calc-title">Calculation Logic</span>
+                              <p className="small risk-calc-text">{display.logic}</p>
+                            </div>
+                            {item.notes ? (
+                              <p className="small">
+                                Signal Detail: {item.notes}
+                              </p>
+                            ) : null}
+                          </div>
+                        </details>
+                      );
+                    })()
+                  ))}
+                </div>
+
+                <div className="risk-admin-box">
+                  <h4>Admin Approval</h4>
+                  <div className="actions">
+                    <select
+                      className="input"
+                      value={adminDecision}
+                      onChange={(e) =>
+                        setAdminDecision(e.target.value as "Approve" | "Reject" | "RequestMoreInfo")
+                      }
+                    >
+                      <option value="Approve">Approve</option>
+                      <option value="Reject">Reject</option>
+                      <option value="RequestMoreInfo">Request More Info</option>
+                    </select>
+                  </div>
+                  <textarea
+                    className="agent-textarea"
+                    value={adminRationale}
+                    onChange={(e) => setAdminRationale(e.target.value)}
+                    rows={3}
+                    placeholder="Enter decision rationale for audit..."
+                  />
+                  <div className="composer-actions">
+                    <button
+                      className="button"
+                      type="button"
+                      onClick={() => onSubmitAdminDecision().catch(() => undefined)}
+                      disabled={riskCaseLoading || !adminRationale.trim()}
+                    >
+                      {riskCaseLoading ? "Submitting..." : "Submit Decision"}
+                    </button>
+                  </div>
+                </div>
+
+                {prAssignment ? (
+                  <div className="risk-assignment-box">
+                    <h4>PR Assignment</h4>
+                    <p className="small">
+                      PR Agent {prAssignment.prAgentId} | Fit {(prAssignment.fitScore * 100).toFixed(1)}% |{" "}
+                      {prAssignment.status}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="risk-assignment-box">
+                    <h4>PR Assignment</h4>
+                    <p className="small">No assignment yet. Approve case to trigger PR assignment.</p>
+                  </div>
+                )}
+
+                <div className="risk-timeline">
+                  <h4>Timeline</h4>
+                  {riskCase.timeline
+                    .slice()
+                    .reverse()
+                    .map((event, idx) => (
+                      <div className="risk-timeline-item" key={`${event.eventType}-${idx}`}>
+                        <strong>{event.eventType}</strong>
+                        <span className="small">
+                          {event.actorType} ({event.actorId}) | {new Date(event.createdAt).toLocaleString()}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+                    </>
+                  );
+                })()}
+              </div>
+            ) : (
+              <p className="small">No workflow case loaded yet.</p>
+            )}
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

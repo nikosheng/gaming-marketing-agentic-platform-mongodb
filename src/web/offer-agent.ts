@@ -237,33 +237,24 @@ async function findMatchingPatronIds(db: Db, criteria: ParsedCriteria): Promise<
   if (criteria.gameTypes.length > 0) patronFilter.preferredGames = { $in: criteria.gameTypes };
   if (criteria.minAdt) patronFilter.adt = { $gte: criteria.minAdt };
   if (criteria.minPoints) patronFilter.pointsBalance = { $gte: criteria.minPoints };
-  if (criteria.activeWithinDays) {
-    const fromDate = new Date(Date.now() - criteria.activeWithinDays * 24 * 60 * 60 * 1000);
-    patronFilter.lastActiveAt = { $gte: fromDate };
+  const fromDate = criteria.activeWithinDays
+    ? new Date(Date.now() - criteria.activeWithinDays * 24 * 60 * 60 * 1000)
+    : undefined;
+  if (fromDate) patronFilter.lastActiveAt = { $gte: fromDate };
+
+  if (criteria.activityType) {
+    const activityMatch: Record<string, unknown> = { activityType: criteria.activityType };
+    if (criteria.activityMinAmount) activityMatch.amount = { $gte: criteria.activityMinAmount };
+    if (fromDate) activityMatch.eventTime = { $gte: fromDate };
+    patronFilter.activities = { $elemMatch: activityMatch };
   }
 
-  const basePatronIds = await db
+  const matchedPatrons = await db
     .collection(webCollections.patrons)
     .find(patronFilter, { projection: { _id: 0, patronId: 1 } })
     .limit(5000)
     .toArray();
-  let finalIds = basePatronIds.map((item) => item.patronId as string);
-
-  if (criteria.activityType) {
-    const activityFilter: Record<string, unknown> = { activityType: criteria.activityType };
-    if (criteria.activityMinAmount) activityFilter.amount = { $gte: criteria.activityMinAmount };
-    if (criteria.activeWithinDays) {
-      const fromDate = new Date(Date.now() - criteria.activeWithinDays * 24 * 60 * 60 * 1000);
-      activityFilter.eventTime = { $gte: fromDate };
-    }
-    const activityPatronIds = await db
-      .collection(webCollections.activities)
-      .distinct("patronId", activityFilter);
-    const allowed = new Set(activityPatronIds as string[]);
-    finalIds = finalIds.filter((id) => allowed.has(id));
-  }
-
-  return finalIds;
+  return matchedPatrons.map((item) => item.patronId as string);
 }
 
 async function buildGenerationStats(db: Db, matchingPatronIds: string[]): Promise<OfferGenerationStats> {

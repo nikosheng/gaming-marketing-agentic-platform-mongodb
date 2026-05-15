@@ -102,6 +102,9 @@ npm run start
 - `campaign_runs`
 - `chat_sessions`
 - `chat_messages`
+- `patron_risk_cases`
+- `pr_agent_profiles`
+- `pr_assignments`
 
 Detailed model: [docs/data-model.md](docs/data-model.md)
 

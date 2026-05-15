@@ -10,6 +10,7 @@
     "seed": "tsx src/seed/seed.ts",
     "seed:dry": "tsx src/seed/seed.ts --dry-run",
     "backfill": "tsx src/scripts/backfill-embeddings.ts",
+    "migrate:activities": "tsx src/scripts/migrate-activities-to-patrons.ts",
     "check": "tsc --noEmit",
     "stop": "kill-port 3000"
   },

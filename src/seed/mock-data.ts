@@ -1,14 +1,23 @@
 import { faker } from "@faker-js/faker";
 import { config } from "../config.js";
 import type {
+  AdminDecision,
+  AgentNodeState,
   CampaignRun,
   ChatMessage,
   ChatSession,
+  FinancialAssessment,
+  LossChasingAssessment,
   OfferCatalog,
   OfferRecommendation,
+  PRAgentProfile,
+  PRAssignment,
+  PatronRiskCase,
   PatronActivityEvent,
   PatronProfile,
   PatronTableSession,
+  RiskCaseTimelineEvent,
+  RiskLevel,
   TableGameType,
   TableStateSnapshot,
 } from "../types.js";
@@ -48,6 +57,7 @@ export function generatePatrons(count: number): PatronProfile[] {
       ),
       pointsBalance: faker.number.int({ min: 200, max: 120000 }),
       lastActiveAt: faker.date.recent({ days: 7 }),
+      activities: [],
       preferenceEmbedding: randomEmbedding(),
       createdAt: faker.date.past({ years: 2 }),
       updatedAt: new Date(),
@@ -101,8 +111,11 @@ export function generateSessions(
   return sessions;
 }
 
-export function generateActivities(patrons: PatronProfile[], countPerPatron = 12): PatronActivityEvent[] {
-  const events: PatronActivityEvent[] = [];
+export function generateActivities(
+  patrons: PatronProfile[],
+  countPerPatron = 12
+): Record<string, PatronActivityEvent[]> {
+  const eventsByPatron: Record<string, PatronActivityEvent[]> = {};
   const activityTypes = [
     "ChipExchange",
     "TableBet",
@@ -112,6 +125,7 @@ export function generateActivities(patrons: PatronProfile[], countPerPatron = 12
     "DrinkRedeem",
   ] as const;
   for (const patron of patrons) {
+    const patronEvents: PatronActivityEvent[] = [];
     for (let i = 0; i < countPerPatron; i += 1) {
       const type = faker.helpers.arrayElement(activityTypes);
       const source =
@@ -122,9 +136,8 @@ export function generateActivities(patrons: PatronProfile[], countPerPatron = 12
             : type === "PointsRedeem"
               ? "Loyalty"
               : "TableSystem";
-      events.push({
+      patronEvents.push({
         eventId: faker.string.uuid(),
-        patronId: patron.patronId,
         activityType: type,
         source,
         amount: faker.number.int({ min: 50, max: 50000 }),
@@ -141,8 +154,11 @@ export function generateActivities(patrons: PatronProfile[], countPerPatron = 12
         eventTime: faker.date.recent({ days: 14 }),
       });
     }
+    eventsByPatron[patron.patronId] = patronEvents.sort(
+      (a, b) => b.eventTime.getTime() - a.eventTime.getTime()
+    );
   }
-  return events.sort((a, b) => b.eventTime.getTime() - a.eventTime.getTime());
+  return eventsByPatron;
 }
 
 export function generateOfferCatalog(): OfferCatalog[] {
@@ -219,6 +235,392 @@ export function generateRecommendations(
     }
   }
   return output;
+}
+
+export function generatePRAgents(count = 24): PRAgentProfile[] {
+  const now = new Date();
+  return Array.from({ length: count }, (_, index) => {
+    const preferredTiers = faker.helpers.arrayElements(
+      ["Silver", "Gold", "Platinum", "Diamond"] as const,
+      { min: 1, max: 3 }
+    );
+    const preferredGames = faker.helpers.arrayElements(gameTypes, { min: 1, max: 3 });
+    return {
+      prAgentId: `PR-${String(index + 1).padStart(4, "0")}`,
+      name: faker.person.fullName(),
+      active: faker.datatype.boolean(0.9),
+      maxActivePatrons: faker.number.int({ min: 6, max: 18 }),
+      currentActivePatrons: faker.number.int({ min: 0, max: 9 }),
+      preferredTiers,
+      preferredGames,
+      preferredLanguages: faker.helpers.arrayElements(
+        ["Cantonese", "Mandarin", "English", "Portuguese", "Thai"],
+        { min: 1, max: 3 }
+      ),
+      specialtyTags: faker.helpers.arrayElements(
+        ["HighRoller", "EntertainmentVIP", "PremiumMass", "FamilyOffice", "LateNightOps"],
+        { min: 1, max: 3 }
+      ),
+      lastAssignedAt: faker.date.recent({ days: 10 }),
+      createdAt: faker.date.past({ years: 2 }),
+      updatedAt: now,
+    };
+  });
+}
+
+function buildLossAssessment(
+  patron: PatronProfile,
+  session: PatronTableSession | undefined
+): LossChasingAssessment {
+  const sessionSignal = session ? Math.min(session.sessionBetAmount / 40000, 1) : 0.2;
+  const adtSignal = Math.min(patron.adt / 35000, 1);
+  const behaviorSignal = session?.behaviorTags.includes("Aggressive")
+    ? 0.9
+    : session?.behaviorTags.includes("PromoSeeker")
+      ? 0.65
+      : 0.35;
+  const score = Number((sessionSignal * 0.45 + adtSignal * 0.3 + behaviorSignal * 0.25).toFixed(3));
+  const label: LossChasingAssessment["label"] =
+    score >= 0.72 ? "Likely" : score >= 0.5 ? "Borderline" : "Unlikely";
+  return {
+    score,
+    label,
+    confidence: Number((0.58 + score * 0.37).toFixed(3)),
+    drivers: [
+      `Session intensity ${(sessionSignal * 100).toFixed(0)}%`,
+      `ADT signal ${(adtSignal * 100).toFixed(0)}%`,
+      `Behavior pattern ${(behaviorSignal * 100).toFixed(0)}%`,
+    ],
+    explanation:
+      label === "Likely"
+        ? "Repeated high-intensity play and behavior markers indicate elevated loss-chasing potential."
+        : label === "Borderline"
+          ? "Some risk markers are present but require admin judgement with financial context."
+          : "Current behavior appears controlled with limited loss-chasing indicators.",
+  };
+}
+
+function buildFinancialAssessment(patron: PatronProfile): FinancialAssessment {
+  const spike = faker.datatype.boolean(0.25);
+  const exchangeAnomaly = faker.datatype.boolean(0.22);
+  const highRiskSource = faker.datatype.boolean(0.12);
+  const freshKyc = faker.datatype.boolean(0.84);
+  const consistentPattern = !(spike || exchangeAnomaly);
+  const amlRiskScore = Number(
+    (
+      (spike ? 0.27 : 0.05) +
+      (exchangeAnomaly ? 0.26 : 0.05) +
+      (highRiskSource ? 0.32 : 0.04) +
+      (freshKyc ? 0.06 : 0.2)
+    ).toFixed(3)
+  );
+  const sourceOfFundsRisk: FinancialAssessment["sourceOfFundsRisk"] =
+    amlRiskScore >= 0.68 ? "High" : amlRiskScore >= 0.4 ? "Medium" : "Low";
+  const creditBand: FinancialAssessment["creditBand"] =
+    patron.adt >= 18000 ? "Strong" : patron.adt >= 9000 ? "Good" : patron.adt >= 3500 ? "Fair" : "Weak";
+
+  return {
+    amlRiskScore,
+    creditBand,
+    sourceOfFundsRisk,
+    confidence: Number((0.62 + (1 - Math.min(amlRiskScore, 0.9)) * 0.25).toFixed(3)),
+    checklist: [
+      {
+        key: "incomePatternConsistent",
+        passed: consistentPattern,
+        notes: consistentPattern ? "Betting profile aligns with historical baseline." : "Recent variance spike observed.",
+      },
+      {
+        key: "largeCashSpike",
+        passed: !spike,
+        notes: spike ? "Large cash exchange spikes detected in recent activities." : "No unusual cash spike pattern.",
+      },
+      {
+        key: "chipExchangeAnomaly",
+        passed: !exchangeAnomaly,
+        notes: exchangeAnomaly ? "Potentially anomalous chip exchange cadence." : "Chip exchange cadence within expected range.",
+      },
+      {
+        key: "highRiskSourceSignal",
+        passed: !highRiskSource,
+        notes: highRiskSource ? "Watchlist-aligned source indicator found." : "No high-risk source signals found.",
+      },
+      {
+        key: "kycProfileFresh",
+        passed: freshKyc,
+        notes: freshKyc ? "KYC profile recently refreshed." : "KYC refresh is overdue.",
+      },
+    ],
+    analystNotes:
+      sourceOfFundsRisk === "High"
+        ? "Escalate to senior reviewer; source-of-funds confidence is insufficient."
+        : sourceOfFundsRisk === "Medium"
+          ? "Proceed with caution and require admin rationale before PR assignment."
+          : "Financial profile appears acceptable for standard workflow.",
+  };
+}
+
+function deriveRiskLevel(
+  lossAssessment: LossChasingAssessment,
+  financialAssessment: FinancialAssessment
+): RiskLevel {
+  if (financialAssessment.amlRiskScore >= 0.75) return "Critical";
+  if (lossAssessment.score >= 0.75 || financialAssessment.amlRiskScore >= 0.55) return "High";
+  if (lossAssessment.score >= 0.5 || financialAssessment.amlRiskScore >= 0.35) return "Medium";
+  return "Low";
+}
+
+function buildNodeStates(status: PatronRiskCase["status"]): AgentNodeState[] {
+  const allNodes: AgentNodeState["nodeName"][] = [
+    "initialize_case",
+    "evaluate_loss_chasing",
+    "evaluate_financial_credit_aml",
+    "risk_escalation_router",
+    "await_admin_review",
+    "assign_pr_agent",
+    "emit_assignment_notice",
+    "finalize_case",
+  ];
+  const now = new Date();
+
+  if (status === "AwaitingAdmin") {
+    return allNodes.map((node) => ({
+      nodeName: node,
+      status:
+        node === "await_admin_review"
+          ? "Running"
+          : allNodes.indexOf(node) < allNodes.indexOf("await_admin_review")
+            ? "Completed"
+            : "Pending",
+      startedAt: node === "await_admin_review" ? now : undefined,
+    }));
+  }
+
+  if (status === "InReview") {
+    return allNodes.map((node) => ({
+      nodeName: node,
+      status:
+        node === "evaluate_financial_credit_aml"
+          ? "Failed"
+          : allNodes.indexOf(node) < allNodes.indexOf("evaluate_financial_credit_aml")
+            ? "Completed"
+            : "Pending",
+      completedAt: allNodes.indexOf(node) < allNodes.indexOf("evaluate_financial_credit_aml") ? now : undefined,
+      message: node === "evaluate_financial_credit_aml" ? "AML model confidence below threshold." : undefined,
+    }));
+  }
+
+  if (status === "Rejected") {
+    return allNodes.map((node) => ({
+      nodeName: node,
+      status:
+        node === "finalize_case"
+          ? "Completed"
+          : node === "assign_pr_agent" || node === "emit_assignment_notice"
+            ? "Skipped"
+            : "Completed",
+      completedAt: now,
+    }));
+  }
+
+  return allNodes.map((node) => ({
+    nodeName: node,
+    status: "Completed",
+    completedAt: now,
+  }));
+}
+
+function buildTimeline(
+  status: PatronRiskCase["status"],
+  adminDecision?: AdminDecision
+): RiskCaseTimelineEvent[] {
+  const now = Date.now();
+  const timeline: RiskCaseTimelineEvent[] = [
+    {
+      eventType: "CaseCreated",
+      actorType: "System",
+      actorId: "risk-case-engine",
+      payload: { status },
+      createdAt: new Date(now - 1000 * 60 * 40),
+    },
+    {
+      eventType: "LossAssessmentCompleted",
+      actorType: "Agent",
+      actorId: "loss-chasing-agent",
+      payload: { ok: true },
+      createdAt: new Date(now - 1000 * 60 * 33),
+    },
+    {
+      eventType: "FinancialAssessmentCompleted",
+      actorType: "Agent",
+      actorId: "financial-aml-agent",
+      payload: { ok: status !== "InReview" },
+      createdAt: new Date(now - 1000 * 60 * 27),
+    },
+  ];
+
+  if (status === "AwaitingAdmin" || status === "Rejected" || status === "Approved" || status === "Assigned") {
+    timeline.push({
+      eventType: "Escalated",
+      actorType: "System",
+      actorId: "risk-escalation-router",
+      payload: { queue: "admin" },
+      createdAt: new Date(now - 1000 * 60 * 21),
+    });
+  }
+
+  if (adminDecision) {
+    timeline.push({
+      eventType: "AdminDecisionSubmitted",
+      actorType: "Admin",
+      actorId: "ADM-001",
+      payload: { decision: adminDecision },
+      createdAt: new Date(now - 1000 * 60 * 14),
+    });
+  }
+
+  if (status === "Assigned") {
+    timeline.push({
+      eventType: "PRAssignmentCreated",
+      actorType: "System",
+      actorId: "pr-assignment-agent",
+      payload: { queue: "pr" },
+      createdAt: new Date(now - 1000 * 60 * 8),
+    });
+  }
+
+  if (status === "Rejected" || status === "Assigned") {
+    timeline.push({
+      eventType: "CaseClosed",
+      actorType: "System",
+      actorId: "risk-case-engine",
+      payload: { finalStatus: status },
+      createdAt: new Date(now - 1000 * 60 * 2),
+    });
+  }
+
+  return timeline;
+}
+
+export function generateRiskCases(
+  patrons: PatronProfile[],
+  tables: TableStateSnapshot[],
+  sessions: PatronTableSession[]
+): PatronRiskCase[] {
+  const sessionsByPatron = new Map(sessions.map((session) => [session.patronId, session]));
+  const tableIds = new Set(tables.map((t) => t.tableId));
+  const cases: PatronRiskCase[] = [];
+
+  const selectedPatrons = faker.helpers.arrayElements(
+    patrons,
+    Math.max(20, Math.floor(patrons.length * 0.38))
+  );
+
+  for (const patron of selectedPatrons) {
+    const session = sessionsByPatron.get(patron.patronId);
+    const lossAssessment = buildLossAssessment(patron, session);
+    const financialAssessment = buildFinancialAssessment(patron);
+    const riskLevel = deriveRiskLevel(lossAssessment, financialAssessment);
+    const escalationTier: PatronRiskCase["escalationTier"] =
+      riskLevel === "Critical" || financialAssessment.sourceOfFundsRisk === "High" ? "Senior" : "Standard";
+
+    const status = faker.helpers.weightedArrayElement<PatronRiskCase["status"]>([
+      { value: "AwaitingAdmin", weight: 28 },
+      { value: "Assigned", weight: 24 },
+      { value: "Rejected", weight: 16 },
+      { value: "Approved", weight: 14 },
+      { value: "InReview", weight: 12 },
+      { value: "Draft", weight: 6 },
+    ]);
+    const adminDecision: AdminDecision | undefined =
+      status === "Assigned" || status === "Approved"
+        ? "Approve"
+        : status === "Rejected"
+          ? "Reject"
+          : undefined;
+
+    const createdAt = faker.date.recent({ days: 14 });
+    const updatedAt = faker.date.between({ from: createdAt, to: new Date() });
+    const preferredTable = session?.tableId && tableIds.has(session.tableId)
+      ? session.tableId
+      : faker.helpers.arrayElement(tables).tableId;
+    const timeline = buildTimeline(status, adminDecision);
+
+    cases.push({
+      caseId: `CASE-${faker.string.alphanumeric({ length: 10, casing: "upper" })}`,
+      patronId: patron.patronId,
+      tableId: preferredTable,
+      analysisRunId: `ANL-${faker.date.recent({ days: 14 }).toISOString().slice(0, 10)}-${faker.number.int({ min: 1000, max: 9999 })}`,
+      status,
+      riskLevel,
+      escalationTier,
+      currentNode:
+        status === "AwaitingAdmin"
+          ? "await_admin_review"
+          : status === "Draft"
+            ? "initialize_case"
+            : status === "InReview"
+              ? "evaluate_financial_credit_aml"
+              : "finalize_case",
+      nodeStates: buildNodeStates(status),
+      lossChasingAssessment: lossAssessment,
+      financialAssessment,
+      adminReview: adminDecision
+        ? {
+            adminUserId: faker.helpers.arrayElement(["ADM-001", "ADM-002", "ADM-SENIOR-01"]),
+            adminDisplayName: faker.person.fullName(),
+            decision: adminDecision,
+            rationale:
+              adminDecision === "Approve"
+                ? "Combined risk is within acceptable threshold with clear follow-up controls."
+                : "Risk and financial indicators are not acceptable for patron outreach.",
+            requestedActions: adminDecision === "Approve" ? [] : ["Manual compliance review required"],
+            createdAt: faker.date.between({ from: createdAt, to: updatedAt }),
+          }
+        : undefined,
+      createdBy: faker.helpers.arrayElement(["MKT-01", "MKT-02", "RISKOPS-01"]),
+      timeline,
+      createdAt,
+      updatedAt,
+    });
+  }
+
+  return cases.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+}
+
+export function generatePRAssignments(
+  riskCases: PatronRiskCase[],
+  prAgents: PRAgentProfile[]
+): PRAssignment[] {
+  const activeAgents = prAgents.filter((agent) => agent.active);
+  const approvedCases = riskCases.filter((riskCase) =>
+    riskCase.status === "Assigned" || riskCase.status === "Approved"
+  );
+  const assignments: PRAssignment[] = [];
+
+  for (const riskCase of approvedCases) {
+    const agent = faker.helpers.arrayElement(activeAgents.length > 0 ? activeAgents : prAgents);
+    const assignedAt = faker.date.between({ from: riskCase.createdAt, to: new Date() });
+    const accepted = faker.datatype.boolean(0.68);
+    const status: PRAssignment["status"] = accepted
+      ? faker.helpers.arrayElement(["Accepted", "Completed"] as const)
+      : "Assigned";
+    assignments.push({
+      assignmentId: `ASG-${faker.string.alphanumeric({ length: 10, casing: "upper" })}`,
+      caseId: riskCase.caseId,
+      patronId: riskCase.patronId,
+      prAgentId: agent.prAgentId,
+      fitScore: Number(faker.number.float({ min: 0.62, max: 0.98, fractionDigits: 3 })),
+      status,
+      assignedAt,
+      acceptedAt: status === "Accepted" || status === "Completed"
+        ? faker.date.between({ from: assignedAt, to: new Date() })
+        : undefined,
+      completedAt: status === "Completed" ? faker.date.soon({ days: 2, refDate: assignedAt }) : undefined,
+    });
+  }
+
+  return assignments;
 }
 
 export function generateCampaigns(
