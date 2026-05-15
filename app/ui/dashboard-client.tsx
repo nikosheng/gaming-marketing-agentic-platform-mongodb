@@ -437,6 +437,7 @@ export default function DashboardClient() {
   const [minBetHistory, setMinBetHistory] = useState<MinBetRecommendation[]>([]);
   const [minBetLoading, setMinBetLoading] = useState<boolean>(false);
   const [minBetActionLoading, setMinBetActionLoading] = useState<boolean>(false);
+  const [drillDrawerOpen, setDrillDrawerOpen] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
 
   useEffect(() => {
@@ -489,6 +490,23 @@ export default function DashboardClient() {
     fetchPatrons().catch((err) => setError((err as Error).message));
     fetchMinBetHistory().catch(() => undefined);
   }, [selectedTableId]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (!drillDrawerOpen) {
+      document.body.classList.remove("drawer-open");
+      return;
+    }
+    document.body.classList.add("drawer-open");
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDrillDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.classList.remove("drawer-open");
+    };
+  }, [drillDrawerOpen]);
 
   const topRecommendations = useMemo(
     () => offerDashboard?.recommendations.slice(0, 8) ?? [],
@@ -822,6 +840,7 @@ export default function DashboardClient() {
         {error ? <p className="error-banner">{error}</p> : null}
 
         {activeSection === "patron-eyes" ? (
+          <>
           <div className="section-stack">
             <article className="panel-card">
               <h2 className="panel-title">Table Heatmap</h2>
@@ -835,10 +854,13 @@ export default function DashboardClient() {
                   <button
                     key={table.tableId}
                     className={`table-btn ${selectedTableId === table.tableId ? "active" : ""}`}
-                    onClick={() => setSelectedTableId(table.tableId)}
+                    onClick={() => {
+                      setSelectedTableId(table.tableId);
+                      setDrillDrawerOpen(true);
+                    }}
                   >
                     <div className="table-head">
-                      <span>{table.tableName}</span>
+                      <span className="table-name">{table.tableName}</span>
                       <span className="table-patron-badge">
                         <svg viewBox="0 0 24 24" aria-hidden="true" width="12" height="12">
                           <path
@@ -849,8 +871,26 @@ export default function DashboardClient() {
                         {table.patronCount}
                       </span>
                     </div>
-                    <div className="muted">{table.gameType}</div>
-                    <div className="muted">Zone {table.zone}</div>
+                    <div className="table-tags">
+                      <span className={`table-chip game-${table.gameType.toLowerCase()}`}>
+                        <svg viewBox="0 0 24 24" aria-hidden="true" width="11" height="11">
+                          <path
+                            d="M19 5H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm-7 4.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5z"
+                            fill="currentColor"
+                          />
+                        </svg>
+                        {table.gameType}
+                      </span>
+                      <span className="table-chip zone-chip">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" width="11" height="11">
+                          <path
+                            d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"
+                            fill="currentColor"
+                          />
+                        </svg>
+                        {table.zone}
+                      </span>
+                    </div>
                     <div
                       className={`table-occupancy-bar ${
                         table.occupancyRate >= 0.8
@@ -865,59 +905,115 @@ export default function DashboardClient() {
                         style={{ width: `${Math.round(table.occupancyRate * 100)}%` }}
                       />
                     </div>
-                    <div className="table-occupancy-label">
-                      Occupancy {Math.round(table.occupancyRate * 100)}%
+                    <div
+                      className={`table-occupancy-footer ${
+                        table.occupancyRate >= 0.8
+                          ? "high"
+                          : table.occupancyRate >= 0.5
+                            ? "medium"
+                            : "low"
+                      }`}
+                    >
+                      <span className="table-occupancy-label-text">Occupancy</span>
+                      <span className="table-occupancy-value">
+                        {Math.round(table.occupancyRate * 100)}
+                        <em>%</em>
+                      </span>
                     </div>
                   </button>
                 ))}
               </div>
             </article>
 
-            <article className="panel-card">
-              <div className="drilldown-head">
-                <h2 className="panel-title">Table Drill-Down: {selectedTableId || "-"}</h2>
-                <button className="button analysis-button" onClick={onAnalyzeTable} type="button">
-                  {analysisLoading ? "Analyzing..." : "Start Loss Potential Agent"}
-                </button>
-              </div>
-              <div className="patron-list">
-                {(patrons?.patrons ?? []).map((patron) => (
-                  <div className="patron-row" key={patron.patronId}>
-                    <div className="patron-head">
-                      <strong>{patron.patronId}</strong>
-                      <span className="small">{patron.tier}</span>
-                    </div>
-                    <div className="split small">
-                      <span>Bet {formatAmount(patron.sessionBetAmount)}</span>
-                      <span>ADT {formatAmount(patron.adt)}</span>
-                      <span>Points {formatAmount(patron.pointsBalance)}</span>
-                      <span>Stack {formatAmount(patron.currentStackEstimate)}</span>
-                    </div>
-                    <div className="patron-actions">
-                      <button
-                        className="button risk-review-btn"
-                        type="button"
-                        onClick={() => onStartRiskReview(patron.patronId).catch(() => undefined)}
-                      >
-                        Start Risk Review
-                      </button>
-                    </div>
+          </div>
+          {/* === Table Drill-Down Drawer === */}
+          <div
+            className={`drilldown-overlay ${drillDrawerOpen ? "open" : ""}`}
+        onClick={() => setDrillDrawerOpen(false)}
+        role="presentation"
+        aria-hidden={!drillDrawerOpen}
+      />
+      <aside
+        className={`drilldown-drawer ${drillDrawerOpen ? "open" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Table Drill-Down"
+      >
+        <header className="drilldown-drawer-head">
+          <div>
+            <h2 className="panel-title">Table {selectedTableId || "-"}</h2>
+            <p className="small">
+              {heatmap?.tables.find((t) => t.tableId === selectedTableId)?.tableName ?? ""}
+              {heatmap?.tables.find((t) => t.tableId === selectedTableId)?.gameType
+                ? ` · ${heatmap?.tables.find((t) => t.tableId === selectedTableId)?.gameType}`
+                : ""}
+            </p>
+          </div>
+          <div className="drilldown-drawer-actions">
+            <button
+              className="button analysis-button"
+              onClick={onAnalyzeTable}
+              type="button"
+              disabled={!selectedTableId || analysisLoading}
+            >
+              {analysisLoading ? "Analyzing..." : "Start Loss Potential Agent"}
+            </button>
+            <button
+              className="drilldown-drawer-close"
+              type="button"
+              aria-label="Close drill-down"
+              onClick={() => setDrillDrawerOpen(false)}
+            >
+              ✕
+            </button>
+          </div>
+        </header>
+        <div className="drilldown-drawer-body">
+          <section className="panel-card" key={`patrons-${selectedTableId}`}>
+            <h3 className="panel-title">Active Patrons</h3>
+            <div className="patron-list">
+              {(patrons?.patrons ?? []).map((patron) => (
+                <div className="patron-row" key={patron.patronId}>
+                  <div className="patron-head">
+                    <strong>{patron.patronId}</strong>
+                    <span className="small">{patron.tier}</span>
                   </div>
-                ))}
-              </div>
-              <div className="minbet-shell">
-                <div className="drilldown-head minbet-head">
-                  <h3 className="panel-title minbet-title">Min-Bet Optimization</h3>
-                  <button
-                    className="button analysis-button"
-                    onClick={() => onOptimizeMinBet().catch(() => undefined)}
-                    type="button"
-                    disabled={!selectedTableId || minBetLoading}
-                  >
-                    {minBetLoading ? "Optimizing..." : "Run Optimizer Agent"}
-                  </button>
+                  <div className="split small">
+                    <span>Bet {formatAmount(patron.sessionBetAmount)}</span>
+                    <span>ADT {formatAmount(patron.adt)}</span>
+                    <span>Points {formatAmount(patron.pointsBalance)}</span>
+                    <span>Stack {formatAmount(patron.currentStackEstimate)}</span>
+                  </div>
+                  <div className="patron-actions">
+                    <button
+                      className="button risk-review-btn"
+                      type="button"
+                      onClick={() => onStartRiskReview(patron.patronId).catch(() => undefined)}
+                    >
+                      Start Risk Review
+                    </button>
+                  </div>
                 </div>
-                {minBetRecommendation ? (
+              ))}
+              {(patrons?.patrons ?? []).length === 0 ? (
+                <p className="small">No active patrons on this table.</p>
+              ) : null}
+            </div>
+          </section>
+
+          <section className="panel-card minbet-shell" key={`minbet-${selectedTableId}`}>
+            <div className="drilldown-head minbet-head">
+              <h3 className="panel-title minbet-title">Min-Bet Optimization</h3>
+              <button
+                className="button analysis-button"
+                onClick={() => onOptimizeMinBet().catch(() => undefined)}
+                type="button"
+                disabled={!selectedTableId || minBetLoading}
+              >
+                {minBetLoading ? "Optimizing..." : "Run Optimizer Agent"}
+              </button>
+            </div>
+            {minBetRecommendation ? (
                   <div className="minbet-card">
                     <div className="minbet-headline">
                       <div className="minbet-bet-block">
@@ -1072,9 +1168,10 @@ export default function DashboardClient() {
                     ))}
                   </div>
                 ) : null}
-              </div>
-              {tableAnalysis ? (
-                <div className="analysis-shell">
+          </section>
+
+          {tableAnalysis ? (
+            <section className="panel-card analysis-shell" key={`analysis-${selectedTableId}`}>
                   <div className="analysis-summary">
                     <span className="metric-chip">Analyzed {tableAnalysis.summary.totalPatrons}</span>
                     <span className="metric-chip">High Potential {tableAnalysis.summary.highPotentialCount}</span>
@@ -1159,10 +1256,11 @@ export default function DashboardClient() {
                       </div>
                     ))}
                   </div>
-                </div>
-              ) : null}
-            </article>
+            </section>
+          ) : null}
           </div>
+          </aside>
+          </>
         ) : (
           <div className="section-grid">
             <div className="catalog-left">
