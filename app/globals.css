@@ -2035,6 +2035,369 @@ body.drawer-open {
   color: #f0f5ff;
 }
 
+/* ---------- Offer Catalog: status filter chips ---------- */
+
+.offer-status-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.offer-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid #2b3f64;
+  background: rgba(20, 32, 57, 0.6);
+  color: #b9cce4;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.offer-status-chip:hover {
+  background: rgba(20, 32, 57, 0.9);
+  color: #f0f5ff;
+  transform: translateY(-1px);
+}
+
+.offer-status-chip.active {
+  color: #f0f5ff;
+  border-color: rgba(114, 168, 255, 0.65);
+  background: linear-gradient(135deg, rgba(114, 168, 255, 0.28), rgba(114, 168, 255, 0.08));
+  box-shadow: 0 0 0 1px rgba(114, 168, 255, 0.35);
+}
+
+.offer-status-chip.status-chip-proposed.active {
+  background: linear-gradient(135deg, rgba(150, 196, 255, 0.32), rgba(150, 196, 255, 0.1));
+  border-color: rgba(150, 196, 255, 0.55);
+  color: #cfe2ff;
+}
+.offer-status-chip.status-chip-active.active {
+  background: linear-gradient(135deg, rgba(31, 214, 147, 0.3), rgba(31, 214, 147, 0.1));
+  border-color: rgba(31, 214, 147, 0.55);
+  color: #a9ebd1;
+}
+.offer-status-chip.status-chip-draft.active {
+  background: linear-gradient(135deg, rgba(170, 190, 220, 0.25), rgba(170, 190, 220, 0.08));
+  border-color: rgba(170, 190, 220, 0.45);
+  color: #d9e3f3;
+}
+.offer-status-chip.status-chip-rejected.active,
+.offer-status-chip.status-chip-expired.active {
+  background: linear-gradient(135deg, rgba(255, 82, 109, 0.28), rgba(255, 82, 109, 0.08));
+  border-color: rgba(255, 82, 109, 0.5);
+  color: #ffb1be;
+}
+
+.status-chip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+/* ---------- Offer card: AI source chip, action footer, review note ---------- */
+
+.offer-card.is-proposed {
+  border-color: rgba(150, 196, 255, 0.45);
+  box-shadow: 0 0 0 1px rgba(150, 196, 255, 0.2), 0 10px 24px rgba(8, 16, 32, 0.45);
+}
+
+.offer-card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.offer-card-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: linear-gradient(135deg, rgba(192, 156, 255, 0.22), rgba(192, 156, 255, 0.08));
+  border: 1px solid rgba(192, 156, 255, 0.45);
+  color: #e4d4ff;
+}
+
+.offer-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px dashed #243759;
+}
+
+.offer-action-btn {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.15s ease;
+}
+
+.offer-action-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+}
+
+.offer-action-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.offer-action-approve {
+  background: linear-gradient(135deg, #5be6b3, #1fd693);
+  color: #052719;
+  border-color: rgba(91, 230, 179, 0.6);
+}
+
+.offer-action-reject {
+  background: linear-gradient(135deg, rgba(255, 123, 141, 0.22), rgba(255, 82, 109, 0.08));
+  color: #ffb1be;
+  border-color: rgba(255, 82, 109, 0.55);
+}
+
+.offer-card-review {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px dashed #243759;
+  color: #9db0ca;
+  font-style: italic;
+}
+
+/* ---------- Reject confirmation modal ---------- */
+
+.reject-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 8, 18, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 80;
+  backdrop-filter: blur(4px);
+}
+
+.reject-modal {
+  width: min(460px, 96vw);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #101a2f 0%, #0a1120 100%);
+  border: 1px solid #365382;
+  padding: 18px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.reject-modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.reject-modal-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: #f0f5ff;
+}
+
+.reject-confirm-btn {
+  background: linear-gradient(135deg, #ff7b8d, #ff526d);
+  color: #3c0410;
+  border: 1px solid rgba(255, 82, 109, 0.6);
+}
+
+/* ---------- Offer Impact Graph: sample matched patrons ---------- */
+
+.impact-samples {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed #243759;
+}
+
+.impact-samples h4 {
+  margin: 0 0 10px;
+  font-size: 0.78rem;
+  color: #9db0ca;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.impact-sample-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.impact-sample-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid #2d3f64;
+  background: linear-gradient(180deg, #14213a 0%, #0f1a2f 100%);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.impact-sample-card:hover {
+  transform: translateY(-1px);
+  border-color: #5d87db;
+  box-shadow: 0 10px 24px rgba(8, 16, 32, 0.4);
+}
+
+.impact-sample-card.is-copied {
+  border-color: rgba(31, 214, 147, 0.55);
+  box-shadow: 0 0 0 1px rgba(31, 214, 147, 0.4);
+}
+
+.impact-sample-head {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.impact-sample-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  font-size: 0.85rem;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.impact-sample-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.impact-sample-identity strong {
+  color: #f0f5ff;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.impact-sample-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.impact-sample-games {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.impact-sample-copied {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  background: linear-gradient(135deg, #5be6b3, #1fd693);
+  color: #052719;
+  animation: impact-copied-fade 0.2s ease both;
+}
+
+@keyframes impact-copied-fade {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Tier chips with per-tier color variants */
+.tier-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.tier-chip-diamond {
+  background: linear-gradient(135deg, rgba(150, 196, 255, 0.22), rgba(150, 196, 255, 0.08));
+  border-color: rgba(150, 196, 255, 0.55);
+  color: #cfe2ff;
+}
+.tier-chip-platinum {
+  background: linear-gradient(135deg, rgba(204, 220, 240, 0.22), rgba(204, 220, 240, 0.08));
+  border-color: rgba(204, 220, 240, 0.5);
+  color: #e6edf7;
+}
+.tier-chip-gold {
+  background: linear-gradient(135deg, rgba(255, 184, 92, 0.24), rgba(255, 170, 51, 0.08));
+  border-color: rgba(255, 170, 51, 0.55);
+  color: #ffd9a1;
+}
+.tier-chip-silver {
+  background: linear-gradient(135deg, rgba(170, 190, 220, 0.18), rgba(170, 190, 220, 0.06));
+  border-color: rgba(170, 190, 220, 0.4);
+  color: #d1dcef;
+}
+.tier-chip-bronze {
+  background: linear-gradient(135deg, rgba(205, 144, 96, 0.24), rgba(170, 110, 70, 0.08));
+  border-color: rgba(205, 144, 96, 0.5);
+  color: #f0c9a0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .impact-sample-copied {
+    animation: none;
+  }
+}
+
 /* ---------- Risk modal: gradient pills (chip row) ---------- */
 
 .gradient-pill {

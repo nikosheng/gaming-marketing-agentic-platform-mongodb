@@ -16,6 +16,7 @@ export const collections = {
   tableStateHistory: "table_state_history",
   minBetRecommendations: "table_minbet_recommendations",
   minBetAudit: "table_minbet_audit",
+  offerApprovalAudit: "offer_approval_audit",
 };
 
 async function createVectorIndexIfNeeded(
@@ -154,6 +155,13 @@ export async function ensureIndexes(db: Db): Promise<void> {
     .createIndex({ status: 1, expiresAt: 1 });
 
   await db.collection(collections.minBetAudit).createIndex({ tableId: 1, at: -1 });
+
+  await db
+    .collection(collections.offerApprovalAudit)
+    .createIndex({ offerId: 1, decidedAt: -1 });
+  await db
+    .collection(collections.offerApprovalAudit)
+    .createIndex({ decision: 1, decidedAt: -1 });
 
   await createVectorIndexIfNeeded(
     db,

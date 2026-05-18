@@ -11,7 +11,9 @@ export type ActivityType =
   | "HotelBooking"
   | "DrinkRedeem";
 export type OfferType = "HotelRoom" | "MusicShowTicket" | "PointsLimitedTime" | "FNBVoucher";
-export type OfferStatus = "Draft" | "Active" | "Expired";
+export type OfferStatus = "Proposed" | "Draft" | "Active" | "Expired" | "Rejected";
+export type OfferCreatedBy = "Manual" | "AIAgent";
+export type OfferApprovalDecision = "Approve" | "Reject";
 export type RecommendationStatus = "Proposed" | "Approved" | "Sent" | "Accepted" | "Rejected";
 export type ChatRole = "system" | "user" | "assistant" | "tool";
 export type RiskCaseStatus =
@@ -99,6 +101,24 @@ export interface OfferCatalog {
   offerEmbedding: number[];
   createdAt: Date;
   updatedAt: Date;
+  createdBy?: OfferCreatedBy;
+  approvalReview?: {
+    decision: OfferApprovalDecision;
+    rationale?: string;
+    actorId: string;
+    decidedAt: Date;
+  };
+}
+
+export interface OfferApprovalAudit {
+  _id?: ObjectId;
+  offerId: string;
+  fromStatus: OfferStatus;
+  toStatus: OfferStatus;
+  decision: OfferApprovalDecision;
+  actorId: string;
+  rationale?: string;
+  decidedAt: Date;
 }
 
 export interface OfferRecommendation {

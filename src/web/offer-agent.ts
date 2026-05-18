@@ -60,10 +60,11 @@ type CreatedOfferSummary = {
   offerId: string;
   title: string;
   offerType: "HotelRoom" | "MusicShowTicket" | "PointsLimitedTime" | "FNBVoucher";
-  status: "Draft";
+  status: "Proposed";
   priority: number;
   estimatedCost: number;
   eligibilityRules: string[];
+  createdBy: "AIAgent";
 };
 
 type GuidanceQuestion = {
@@ -81,6 +82,15 @@ type OfferGenerationStats = {
   gameBreakdown: Array<{ label: string; value: number }>;
 };
 
+type SampleMatchedPatron = {
+  patronId: string;
+  maskedName: string;
+  tier: string;
+  adt: number;
+  pointsBalance: number;
+  preferredGames: string[];
+};
+
 const OfferAgentState = Annotation.Root({
   prompt: Annotation<string>,
   criteria: Annotation<ParsedCriteria | null>,
@@ -89,6 +99,7 @@ const OfferAgentState = Annotation.Root({
   offerEmbedding: Annotation<number[]>,
   createdOffer: Annotation<CreatedOfferSummary | null>,
   stats: Annotation<OfferGenerationStats | null>,
+  sampleMatchedPatrons: Annotation<SampleMatchedPatron[]>,
   requiresClarification: Annotation<boolean>,
   guidanceQuestions: Annotation<GuidanceQuestion[]>,
   reply: Annotation<string>,
@@ -325,7 +336,8 @@ async function createOfferDocument(
     estimatedCost: criteria.estimatedCost,
     targetGameTypes: criteria.gameTypes,
     priority: Math.max(1, Math.min(100, criteria.priority)),
-    status: "Draft" as const,
+    status: "Proposed" as const,
+    createdBy: "AIAgent" as const,
     offerEmbedding,
     createdAt: now,
     updatedAt: now,
@@ -341,6 +353,7 @@ async function createOfferDocument(
     priority: offerDoc.priority,
     estimatedCost: offerDoc.estimatedCost,
     eligibilityRules: offerDoc.eligibilityRules,
+    createdBy: offerDoc.createdBy,
   };
 }
 
@@ -367,7 +380,29 @@ function buildOfferAgentGraph(db: Db) {
       }
       const matchingPatronIds = await findMatchingPatronIds(db, state.criteria);
       const stats = await buildGenerationStats(db, matchingPatronIds);
-      return { matchingPatronIds, stats };
+      const sampleMatchedPatrons: SampleMatchedPatron[] =
+        matchingPatronIds.length === 0
+          ? []
+          : ((await db
+              .collection(webCollections.patrons)
+              .aggregate([
+                { $match: { patronId: { $in: matchingPatronIds } } },
+                { $sort: { adt: -1 } },
+                { $limit: 3 },
+                {
+                  $project: {
+                    _id: 0,
+                    patronId: 1,
+                    maskedName: 1,
+                    tier: 1,
+                    adt: 1,
+                    pointsBalance: 1,
+                    preferredGames: 1,
+                  },
+                },
+              ])
+              .toArray()) as unknown as SampleMatchedPatron[]);
+      return { matchingPatronIds, stats, sampleMatchedPatrons };
     })
     .addNode("embed", async (state) => {
       if (state.error || !state.criteria || state.requiresClarification) {
@@ -407,14 +442,14 @@ function buildOfferAgentGraph(db: Db) {
       if (!state.createdOffer) {
         return { reply: "Unable to create offer from provided prompt." };
       }
-      const previewPatrons = state.matchingPatronIds.slice(0, 12);
       const reply = [
-        `Created offer "${state.createdOffer.title}" (${state.createdOffer.offerId}) as ${state.createdOffer.status}.`,
+        `✨ Offer "${state.createdOffer.title}" (${state.createdOffer.offerId}) submitted as Proposed — awaiting admin approval.`,
         `Matched patrons: ${state.matchingPatronIds.length}.`,
         `Detected criteria: ${state.eligibilityRules.join("; ")}.`,
-        previewPatrons.length > 0
-          ? `Sample patron IDs: ${previewPatrons.join(", ")}.`
+        state.sampleMatchedPatrons && state.sampleMatchedPatrons.length > 0
+          ? `Top sample patrons shown in the Impact Graph.`
           : "No patrons currently match.",
+        `Use the Offer Catalog "Proposed" filter to review.`,
       ].join(" ");
       return { reply };
     })
@@ -437,6 +472,7 @@ export async function createOfferFromPrompt(db: Db, prompt: string) {
     offerEmbedding: [],
     createdOffer: null,
     stats: null,
+    sampleMatchedPatrons: [],
     requiresClarification: false,
     guidanceQuestions: [],
     reply: "",
@@ -450,6 +486,7 @@ export async function createOfferFromPrompt(db: Db, prompt: string) {
     createdOffer: finalState.createdOffer,
     matchedPatronCount: finalState.matchingPatronIds.length,
     matchedPatronSample: previewPatrons,
+    sampleMatchedPatrons: finalState.sampleMatchedPatrons ?? [],
     stats: finalState.stats,
     requiresClarification: finalState.requiresClarification,
     guidanceQuestions: finalState.guidanceQuestions,

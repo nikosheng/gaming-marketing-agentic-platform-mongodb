@@ -20,11 +20,14 @@ export async function GET() {
               status: 1,
               priority: 1,
               estimatedCost: 1,
+              createdBy: 1,
+              approvalReview: 1,
+              createdAt: 1,
             },
           }
         )
-        .sort({ priority: -1 })
-        .limit(20)
+        .sort({ priority: -1, createdAt: -1 })
+        .limit(40)
         .toArray(),
       db
         .collection(webCollections.recommendations)
@@ -77,6 +80,12 @@ export async function GET() {
       return acc;
     }, {});
 
+    const offerStatusCounts = offers.reduce<Record<string, number>>((acc, offer) => {
+      const key = String(offer.status ?? "Unknown");
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+
     return NextResponse.json({
       ok: true,
       summary: {
@@ -84,6 +93,8 @@ export async function GET() {
         recommendationCount: recommendations.length,
         recentActivityCount: recentActivities.length,
         recommendationStatusCounts: statusCounts,
+        offerStatusCounts,
+        proposedCount: offerStatusCounts.Proposed ?? 0,
       },
       offers,
       recommendations,

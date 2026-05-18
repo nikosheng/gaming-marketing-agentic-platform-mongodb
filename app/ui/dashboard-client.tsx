@@ -86,6 +86,8 @@ type OfferDashboardResponse = {
     recommendationCount: number;
     recentActivityCount: number;
     recommendationStatusCounts: Record<string, number>;
+    offerStatusCounts?: Record<string, number>;
+    proposedCount?: number;
   };
   offers: Array<{
     offerId: string;
@@ -94,6 +96,13 @@ type OfferDashboardResponse = {
     status: string;
     priority: number;
     estimatedCost: number;
+    createdBy?: "Manual" | "AIAgent";
+    approvalReview?: {
+      decision: "Approve" | "Reject";
+      rationale?: string;
+      actorId: string;
+      decidedAt: string;
+    };
   }>;
   recommendations: Array<{
     recommendationId: string;
@@ -160,6 +169,15 @@ type OfferGenerationStats = {
   avgMatchedAdt: number;
   tierBreakdown: Array<{ label: string; value: number }>;
   gameBreakdown: Array<{ label: string; value: number }>;
+};
+
+type SampleMatchedPatron = {
+  patronId: string;
+  maskedName: string;
+  tier: string;
+  adt: number;
+  pointsBalance: number;
+  preferredGames: string[];
 };
 
 type RiskCasePayload = {
@@ -525,10 +543,17 @@ export default function DashboardClient() {
   const [generatedOffers, setGeneratedOffers] = useState<GeneratedOffer[]>([]);
   const [generatedPatron, setGeneratedPatron] = useState<GeneratedPatronSummary>(null);
   const [recoStatusFilter, setRecoStatusFilter] = useState<string>("All");
+  const [offerStatusFilter, setOfferStatusFilter] = useState<string>("All");
+  const [rejectOfferId, setRejectOfferId] = useState<string | null>(null);
+  const [rejectOfferTitle, setRejectOfferTitle] = useState<string>("");
+  const [rejectRationale, setRejectRationale] = useState<string>("");
+  const [offerActionLoading, setOfferActionLoading] = useState<string | null>(null);
   const [agentInput, setAgentInput] = useState<string>("");
   const [agentLoading, setAgentLoading] = useState<boolean>(false);
   const [agentQuestions, setAgentQuestions] = useState<GuidanceQuestion[]>([]);
   const [agentStats, setAgentStats] = useState<OfferGenerationStats | null>(null);
+  const [sampleMatchedPatrons, setSampleMatchedPatrons] = useState<SampleMatchedPatron[]>([]);
+  const [copiedPatronId, setCopiedPatronId] = useState<string | null>(null);
   const [agentMessages, setAgentMessages] = useState<AgentMessage[]>([
     {
       role: "assistant",
@@ -630,6 +655,106 @@ export default function DashboardClient() {
     [offerDashboard]
   );
 
+  const offerStatusCounts = useMemo(() => {
+    const counts: Record<string, number> = {
+      All: 0,
+      Proposed: 0,
+      Active: 0,
+      Draft: 0,
+      Rejected: 0,
+      Expired: 0,
+    };
+    for (const o of offerDashboard?.offers ?? []) {
+      counts.All += 1;
+      const key = o.status;
+      if (counts[key] !== undefined) counts[key] += 1;
+    }
+    return counts;
+  }, [offerDashboard]);
+
+  const filteredOffers = useMemo(() => {
+    const all = offerDashboard?.offers ?? [];
+    if (offerStatusFilter === "All") return all.slice(0, 16);
+    return all.filter((o) => o.status === offerStatusFilter).slice(0, 16);
+  }, [offerDashboard, offerStatusFilter]);
+
+  function onCopyPatronId(patronId: string) {
+    const fallback = () => {
+      setCopiedPatronId(patronId);
+      window.setTimeout(() => {
+        setCopiedPatronId((current) => (current === patronId ? null : current));
+      }, 1500);
+    };
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(patronId).then(fallback, fallback);
+    } else {
+      fallback();
+    }
+  }
+
+  async function refreshOfferDashboard() {
+    const res = await fetch("/api/offers/dashboard", { cache: "no-store" });
+    const data = (await res.json()) as OfferDashboardResponse;
+    if (data.ok) setOfferDashboard(data);
+  }
+
+  async function onApproveOffer(offerId: string) {
+    if (offerActionLoading) return;
+    setOfferActionLoading(offerId);
+    try {
+      const res = await fetch(`/api/offers/${offerId}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = (await res.json()) as { ok: boolean; error?: string };
+      if (!data.ok) {
+        setError(data.error ?? "Failed to approve offer.");
+        return;
+      }
+      await refreshOfferDashboard();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setOfferActionLoading(null);
+    }
+  }
+
+  function openRejectModal(offerId: string, title: string) {
+    setRejectOfferId(offerId);
+    setRejectOfferTitle(title);
+    setRejectRationale("");
+  }
+
+  function closeRejectModal() {
+    setRejectOfferId(null);
+    setRejectOfferTitle("");
+    setRejectRationale("");
+  }
+
+  async function onConfirmReject() {
+    if (!rejectOfferId || !rejectRationale.trim() || offerActionLoading) return;
+    setOfferActionLoading(rejectOfferId);
+    try {
+      const res = await fetch(`/api/offers/${rejectOfferId}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rationale: rejectRationale.trim() }),
+      });
+      const data = (await res.json()) as { ok: boolean; error?: string };
+      if (!data.ok) {
+        setError(data.error ?? "Failed to reject offer.");
+        return;
+      }
+      await refreshOfferDashboard();
+      closeRejectModal();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setOfferActionLoading(null);
+    }
+  }
+
   function formatAmount(value: number) {
     return value.toLocaleString();
   }
@@ -672,6 +797,7 @@ export default function DashboardClient() {
         reply?: string;
         error?: string;
         stats?: OfferGenerationStats | null;
+        sampleMatchedPatrons?: SampleMatchedPatron[];
         guidanceQuestions?: GuidanceQuestion[];
         requiresClarification?: boolean;
       };
@@ -688,6 +814,9 @@ export default function DashboardClient() {
       ]);
       setAgentQuestions(data.guidanceQuestions ?? []);
       setAgentStats(data.requiresClarification ? null : (data.stats ?? null));
+      setSampleMatchedPatrons(
+        data.requiresClarification ? [] : (data.sampleMatchedPatrons ?? [])
+      );
 
       const offersRes = await fetch("/api/offers/dashboard", { cache: "no-store" });
       const offersData = (await offersRes.json()) as OfferDashboardResponse;
@@ -1397,33 +1526,88 @@ export default function DashboardClient() {
                     <span className="metric-chip">Recs {offerDashboard?.summary.recommendationCount ?? "-"}</span>
                   </div>
                 </div>
+                <div className="offer-status-filter">
+                  {(["All", "Proposed", "Active", "Draft", "Rejected", "Expired"] as const).map((status) => {
+                    const count = offerStatusCounts[status] ?? 0;
+                    const active = offerStatusFilter === status;
+                    return (
+                      <button
+                        type="button"
+                        key={status}
+                        className={`offer-status-chip status-chip-${status.toLowerCase()} ${active ? "active" : ""}`}
+                        onClick={() => setOfferStatusFilter(status)}
+                      >
+                        {status}
+                        {count > 0 ? <span className="status-chip-count">{count}</span> : null}
+                      </button>
+                    );
+                  })}
+                </div>
                 <div className="offer-grid">
-                  {(offerDashboard?.offers ?? []).slice(0, 12).map((offer) => {
+                  {filteredOffers.map((offer) => {
                     const typeClass = `type-${offer.offerType.toLowerCase()}`;
                     const statusClass = offer.status.toLowerCase();
-                    const priorityPct = Math.max(0, Math.min(100, Math.round((offer.priority / 10) * 100)));
+                    const isProposed = offer.status === "Proposed";
+                    const isAi = offer.createdBy === "AIAgent";
+                    const actionBusy = offerActionLoading === offer.offerId;
                     return (
-                      <div className="offer-card" key={offer.offerId}>
+                      <div
+                        className={`offer-card ${isProposed ? "is-proposed" : ""}`}
+                        key={offer.offerId}
+                      >
                         <div className="offer-card-head">
                           <span className="offer-card-title">{offer.title}</span>
                           <span className={`status-pill status-${statusClass}`}>{offer.status}</span>
                         </div>
-                        <span className={`type-chip ${typeClass}`}>{offer.offerType}</span>
+                        <div className="offer-card-chips">
+                          <span className={`type-chip ${typeClass}`}>{offer.offerType}</span>
+                          {isAi ? (
+                            <span className="offer-card-source" title="Created by AI Agent">
+                              <svg width="11" height="11" viewBox="0 0 24 24" aria-hidden="true">
+                                <path
+                                  fill="currentColor"
+                                  d="M12 2a2 2 0 0 1 2 2v1h3a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3h3V4a2 2 0 0 1 2-2zm-3 9a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm6 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"
+                                />
+                              </svg>
+                              AI Agent
+                            </span>
+                          ) : null}
+                        </div>
                         <div className="offer-card-meta">
                           <span className="small">Cost</span>
                           <strong>HK$ {formatAmount(offer.estimatedCost)}</strong>
                         </div>
-                        <div className="offer-card-priority">
-                          <div className="small">Priority {offer.priority}/10</div>
-                          <div className="priority-bar">
-                            <div style={{ width: `${priorityPct}%` }} />
+                        {isProposed ? (
+                          <div className="offer-card-actions">
+                            <button
+                              type="button"
+                              className="offer-action-btn offer-action-approve"
+                              onClick={() => onApproveOffer(offer.offerId).catch(() => undefined)}
+                              disabled={actionBusy}
+                            >
+                              {actionBusy ? "..." : "✓ Approve"}
+                            </button>
+                            <button
+                              type="button"
+                              className="offer-action-btn offer-action-reject"
+                              onClick={() => openRejectModal(offer.offerId, offer.title)}
+                              disabled={actionBusy}
+                            >
+                              ✗ Reject
+                            </button>
                           </div>
-                        </div>
+                        ) : offer.approvalReview ? (
+                          <div className="small offer-card-review">
+                            {offer.approvalReview.decision === "Reject"
+                              ? `Rejected: ${offer.approvalReview.rationale ?? ""}`
+                              : `Approved by ${offer.approvalReview.actorId}`}
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })}
-                  {(offerDashboard?.offers ?? []).length === 0 ? (
-                    <p className="small">No offers loaded.</p>
+                  {filteredOffers.length === 0 ? (
+                    <p className="small">No offers match the {offerStatusFilter} filter.</p>
                   ) : null}
                 </div>
               </article>
@@ -1714,6 +1898,66 @@ export default function DashboardClient() {
                     })}
                   </div>
                 </div>
+                {sampleMatchedPatrons.length > 0 ? (
+                  <div className="impact-samples">
+                    <h4>Sample Matched Patrons</h4>
+                    <div className="impact-sample-list">
+                      {sampleMatchedPatrons.map((p) => {
+                        const tierKey = (p.tier || "Bronze").toLowerCase();
+                        const copied = copiedPatronId === p.patronId;
+                        return (
+                          <button
+                            type="button"
+                            key={p.patronId}
+                            className={`impact-sample-card ${copied ? "is-copied" : ""}`}
+                            onClick={() => onCopyPatronId(p.patronId)}
+                            title={copied ? "Copied!" : "Click to copy patron ID"}
+                          >
+                            <div className="impact-sample-head">
+                              <div
+                                className="impact-sample-avatar"
+                                style={{ background: avatarGradient(p.patronId) }}
+                                aria-hidden="true"
+                              >
+                                {getInitials(p.maskedName || p.patronId)}
+                              </div>
+                              <div className="impact-sample-identity">
+                                <strong>{p.maskedName || p.patronId}</strong>
+                                <span className="mono-pill">{p.patronId}</span>
+                              </div>
+                              <span className={`tier-chip tier-chip-${tierKey}`}>
+                                {p.tier}
+                              </span>
+                            </div>
+                            <div className="impact-sample-meta">
+                              <span className="muted-chip">
+                                ADT {formatAmount(p.adt)}
+                              </span>
+                              <span className="muted-chip">
+                                Points {formatAmount(p.pointsBalance)}
+                              </span>
+                            </div>
+                            {p.preferredGames && p.preferredGames.length > 0 ? (
+                              <div className="impact-sample-games">
+                                {p.preferredGames.map((g) => (
+                                  <span
+                                    className="pr-chip pr-chip-game"
+                                    key={`${p.patronId}-${g}`}
+                                  >
+                                    {g}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                            {copied ? (
+                              <span className="impact-sample-copied">Copied!</span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="impact-foot">
                   <span className="metric-chip">Avg ADT {formatAmount(agentStats.avgMatchedAdt)}</span>
                   <span className="metric-chip">Matched {formatAmount(agentStats.matchedPatrons)}</span>
@@ -2120,6 +2364,68 @@ export default function DashboardClient() {
             ) : (
               <p className="small">No workflow case loaded yet.</p>
             )}
+          </div>
+        </div>
+      ) : null}
+      {rejectOfferId ? (
+        <div
+          className="reject-modal-overlay"
+          onClick={closeRejectModal}
+          role="presentation"
+        >
+          <div
+            className="reject-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="reject-modal-head">
+              <h3>Reject Offer</h3>
+              <button
+                className="drilldown-drawer-close"
+                type="button"
+                onClick={closeRejectModal}
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="small">
+              <strong>{rejectOfferTitle}</strong> ({rejectOfferId})
+            </p>
+            <p className="small">
+              Provide a rationale for rejection. This will be recorded in the
+              audit log.
+            </p>
+            <textarea
+              className="agent-textarea"
+              rows={4}
+              placeholder="Reason for rejecting this offer..."
+              value={rejectRationale}
+              onChange={(e) => setRejectRationale(e.target.value)}
+            />
+            <div className="composer-actions">
+              <button
+                className="button ghost-button"
+                type="button"
+                onClick={closeRejectModal}
+              >
+                Cancel
+              </button>
+              <button
+                className="button offer-action-reject reject-confirm-btn"
+                type="button"
+                onClick={() => onConfirmReject().catch(() => undefined)}
+                disabled={
+                  !rejectRationale.trim() ||
+                  offerActionLoading === rejectOfferId
+                }
+              >
+                {offerActionLoading === rejectOfferId
+                  ? "Rejecting..."
+                  : "Reject Offer"}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

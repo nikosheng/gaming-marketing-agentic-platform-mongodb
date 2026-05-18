@@ -10,4 +10,5 @@ export const webCollections = {
   tableStateHistory: "table_state_history",
   minBetRecommendations: "table_minbet_recommendations",
   minBetAudit: "table_minbet_audit",
+  offerApprovalAudit: "offer_approval_audit",
 };
