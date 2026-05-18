@@ -212,6 +212,19 @@ type PRAssignmentPayload = {
   assignedAt: string;
 };
 
+type PRAgentProfileDTO = {
+  prAgentId: string;
+  name: string;
+  active: boolean;
+  maxActivePatrons: number;
+  currentActivePatrons: number;
+  preferredTiers: string[];
+  preferredGames: string[];
+  preferredLanguages: string[];
+  specialtyTags: string[];
+  lastAssignedAt?: string;
+} | null;
+
 type MinBetRecommendation = {
   recommendationId: string;
   tableId: string;
@@ -429,6 +442,77 @@ function buildAmlAgentSteps(riskCase: RiskCasePayload): AgentGraphStep[] {
   ];
 }
 
+// ---------- Risk modal helpers ----------
+
+function getInitials(name: string): string {
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "??";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function avatarGradient(id: string): string {
+  let h = 0;
+  for (let i = 0; i < id.length; i += 1) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  const hue1 = h % 360;
+  const hue2 = (hue1 + 50) % 360;
+  return `linear-gradient(135deg, hsl(${hue1} 70% 55%), hsl(${hue2} 65% 45%))`;
+}
+
+function formatRelative(iso: string): string {
+  if (!iso) return "";
+  const diffMs = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(diffMs)) return "";
+  const sec = Math.floor(diffMs / 1000);
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+function humanizeEventType(t: string): string {
+  return t.replace(/([A-Z])/g, " $1").trim();
+}
+
+function getActorTone(actorType: string): "system" | "agent" | "admin" | "pr" {
+  if (actorType === "System") return "system";
+  if (actorType === "Agent") return "agent";
+  if (actorType === "Admin") return "admin";
+  return "pr";
+}
+
+function getPayloadSummary(
+  eventType: string,
+  payload: Record<string, unknown> | undefined
+): string | null {
+  if (!payload) return null;
+  const num = (v: unknown) => (typeof v === "number" ? v : Number(v));
+  switch (eventType) {
+    case "LossAssessmentCompleted":
+      return `Score ${(num(payload.score) * 100).toFixed(0)}% · ${payload.label ?? "-"}`;
+    case "FinancialAssessmentCompleted":
+      return `AML ${(num(payload.amlRiskScore) * 100).toFixed(0)}% · SoF ${
+        payload.sourceOfFundsRisk ?? "-"
+      }`;
+    case "Escalated":
+      return `Tier: ${payload.escalationTier ?? "-"}`;
+    case "AdminDecisionSubmitted":
+      return `${payload.decision ?? "-"}`;
+    case "PRAssignmentCreated":
+      return `${payload.prAgentId ?? "-"} (fit ${(num(payload.fitScore) * 100).toFixed(0)}%)`;
+    case "CaseClosed":
+      return `Final: ${payload.finalStatus ?? "-"}`;
+    case "CaseCreated":
+      return payload.tableId ? `Table ${payload.tableId}` : null;
+    default:
+      return null;
+  }
+}
+
 export default function DashboardClient() {
   const [activeSection, setActiveSection] = useState<ConsoleSection>("patron-eyes");
   const [heatmap, setHeatmap] = useState<HeatmapResponse | null>(null);
@@ -456,6 +540,7 @@ export default function DashboardClient() {
   const [riskCaseModalOpen, setRiskCaseModalOpen] = useState<boolean>(false);
   const [riskCase, setRiskCase] = useState<RiskCasePayload | null>(null);
   const [prAssignment, setPrAssignment] = useState<PRAssignmentPayload | null>(null);
+  const [prAgentProfile, setPrAgentProfile] = useState<PRAgentProfileDTO>(null);
   const [riskCasePatronId, setRiskCasePatronId] = useState<string>("");
   const [adminDecision, setAdminDecision] = useState<"Approve" | "Reject" | "RequestMoreInfo">("Approve");
   const [adminRationale, setAdminRationale] = useState<string>("");
@@ -778,12 +863,15 @@ export default function DashboardClient() {
         ok: boolean;
         case?: RiskCasePayload;
         assignment?: PRAssignmentPayload | null;
+        prAgentProfile?: PRAgentProfileDTO;
       };
       if (latestData.ok && latestData.case) {
         setRiskCase(latestData.case);
         setPrAssignment(latestData.assignment ?? null);
+        setPrAgentProfile(latestData.prAgentProfile ?? null);
       } else {
         setPrAssignment(null);
+        setPrAgentProfile(null);
       }
     } catch (err) {
       setError((err as Error).message);
@@ -808,6 +896,7 @@ export default function DashboardClient() {
         ok: boolean;
         case?: RiskCasePayload;
         assignment?: PRAssignmentPayload | null;
+        prAgentProfile?: PRAgentProfileDTO;
         error?: string;
       };
       if (!data.ok || !data.case) {
@@ -816,6 +905,7 @@ export default function DashboardClient() {
       }
       setRiskCase(data.case);
       setPrAssignment(data.assignment ?? null);
+      setPrAgentProfile(data.prAgentProfile ?? null);
       setAdminRationale("");
     } catch (err) {
       setError((err as Error).message);
@@ -1639,14 +1729,28 @@ export default function DashboardClient() {
         <div className="risk-modal-overlay" onClick={() => setRiskCaseModalOpen(false)} role="presentation">
           <div className="risk-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
             <div className="risk-modal-head">
-              <div>
+              <div className="risk-modal-head-left">
                 <h3>Patron Risk Workflow</h3>
-                <p className="small">
-                  {riskCasePatronId || riskCase?.patronId} | Case {riskCase?.caseId ?? "Initializing..."}
-                </p>
+                <div className="risk-modal-head-chips">
+                  <span className="mono-pill">{riskCasePatronId || riskCase?.patronId || "—"}</span>
+                  <span className="mono-pill">{riskCase?.caseId ?? "Initializing..."}</span>
+                </div>
               </div>
-              <button className="button ghost-button" onClick={() => setRiskCaseModalOpen(false)} type="button">
-                Close
+              {riskCase ? (
+                <span
+                  className={`risk-badge-big risk-${normalizeRiskTone(riskCase.riskLevel)}`}
+                  aria-label={`Risk level ${riskCase.riskLevel}`}
+                >
+                  {riskCase.riskLevel.toUpperCase()} RISK
+                </span>
+              ) : null}
+              <button
+                className="drilldown-drawer-close"
+                onClick={() => setRiskCaseModalOpen(false)}
+                type="button"
+                aria-label="Close"
+              >
+                ✕
               </button>
             </div>
 
@@ -1660,11 +1764,17 @@ export default function DashboardClient() {
                   return (
                     <>
                 <div className="risk-chip-row">
-                  <span className={`analysis-badge risk-level-chip risk-${overallTone}`}>
+                  <span className={`gradient-pill gradient-pill-status`}>Status: {riskCase.status}</span>
+                  <span
+                    className={`gradient-pill gradient-pill-escalation ${
+                      riskCase.escalationTier === "Senior" ? "is-senior" : ""
+                    }`}
+                  >
+                    Escalation: {riskCase.escalationTier}
+                  </span>
+                  <span className={`gradient-pill gradient-pill-risk risk-${overallTone}`}>
                     {riskCase.riskLevel} Risk
                   </span>
-                  <span className="metric-chip">Status {riskCase.status}</span>
-                  <span className="metric-chip">Escalation {riskCase.escalationTier}</span>
                 </div>
 
                 <div className="risk-cards-grid">
@@ -1778,18 +1888,21 @@ export default function DashboardClient() {
 
                 <div className="risk-admin-box">
                   <h4>Admin Approval</h4>
-                  <div className="actions">
-                    <select
-                      className="input"
-                      value={adminDecision}
-                      onChange={(e) =>
-                        setAdminDecision(e.target.value as "Approve" | "Reject" | "RequestMoreInfo")
-                      }
-                    >
-                      <option value="Approve">Approve</option>
-                      <option value="Reject">Reject</option>
-                      <option value="RequestMoreInfo">Request More Info</option>
-                    </select>
+                  <div className="segmented-control" role="radiogroup" aria-label="Admin decision">
+                    {(["Approve", "Reject", "RequestMoreInfo"] as const).map((opt) => (
+                      <button
+                        key={opt}
+                        type="button"
+                        role="radio"
+                        aria-checked={adminDecision === opt}
+                        className={`segmented-control-btn segmented-${opt.toLowerCase()} ${
+                          adminDecision === opt ? "active" : ""
+                        }`}
+                        onClick={() => setAdminDecision(opt)}
+                      >
+                        {opt === "RequestMoreInfo" ? "Request More Info" : opt}
+                      </button>
+                    ))}
                   </div>
                   <textarea
                     className="agent-textarea"
@@ -1810,35 +1923,196 @@ export default function DashboardClient() {
                   </div>
                 </div>
 
-                {prAssignment ? (
-                  <div className="risk-assignment-box">
-                    <h4>PR Assignment</h4>
-                    <p className="small">
-                      PR Agent {prAssignment.prAgentId} | Fit {(prAssignment.fitScore * 100).toFixed(1)}% |{" "}
-                      {prAssignment.status}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="risk-assignment-box">
-                    <h4>PR Assignment</h4>
-                    <p className="small">No assignment yet. Approve case to trigger PR assignment.</p>
-                  </div>
-                )}
-
-                <div className="risk-timeline">
-                  <h4>Timeline</h4>
-                  {riskCase.timeline
-                    .slice()
-                    .reverse()
-                    .map((event, idx) => (
-                      <div className="risk-timeline-item" key={`${event.eventType}-${idx}`}>
-                        <strong>{event.eventType}</strong>
-                        <span className="small">
-                          {event.actorType} ({event.actorId}) | {new Date(event.createdAt).toLocaleString()}
-                        </span>
+                <section className="pr-profile-card">
+                  <h4>PR Assignment</h4>
+                  {prAssignment && prAgentProfile ? (
+                    <>
+                      <div className="pr-profile-head">
+                        <div
+                          className="pr-avatar"
+                          style={{ background: avatarGradient(prAgentProfile.prAgentId) }}
+                          aria-hidden="true"
+                        >
+                          {getInitials(prAgentProfile.name)}
+                        </div>
+                        <div className="pr-profile-identity">
+                          <strong className="pr-name">{prAgentProfile.name}</strong>
+                          <div className="small">
+                            <span className="mono-pill">{prAgentProfile.prAgentId}</span>{" "}
+                            <span className={prAgentProfile.active ? "tag-active" : "tag-inactive"}>
+                              ● {prAgentProfile.active ? "Active" : "Inactive"}
+                            </span>
+                          </div>
+                          <div
+                            className="small"
+                            title={new Date(prAssignment.assignedAt).toLocaleString()}
+                          >
+                            Assigned {formatRelative(prAssignment.assignedAt)}
+                          </div>
+                        </div>
+                        <div className="pr-fit-block">
+                          <span className="small">Fit Score</span>
+                          <strong
+                            className={`pr-fit-value pr-fit-${
+                              prAssignment.fitScore >= 0.7
+                                ? "high"
+                                : prAssignment.fitScore >= 0.5
+                                  ? "med"
+                                  : "low"
+                            }`}
+                          >
+                            {(prAssignment.fitScore * 100).toFixed(0)}%
+                          </strong>
+                        </div>
                       </div>
-                    ))}
-                </div>
+
+                      <div className="pr-capacity">
+                        <div className="pr-capacity-head">
+                          <span className="small">Capacity</span>
+                          <strong>
+                            {prAgentProfile.currentActivePatrons} / {prAgentProfile.maxActivePatrons}{" "}
+                            patrons
+                          </strong>
+                        </div>
+                        <div className="pr-capacity-bar">
+                          <div
+                            style={{
+                              width: `${Math.min(
+                                100,
+                                Math.round(
+                                  (prAgentProfile.currentActivePatrons /
+                                    Math.max(1, prAgentProfile.maxActivePatrons)) *
+                                    100
+                                )
+                              )}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      {prAgentProfile.preferredTiers?.length ? (
+                        <div className="pr-chip-group">
+                          <span className="pr-chip-label">Preferred Tiers</span>
+                          <div className="pr-chip-row">
+                            {prAgentProfile.preferredTiers.map((t) => (
+                              <span className="pr-chip pr-chip-tier" key={`tier-${t}`}>
+                                {t}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {prAgentProfile.preferredGames?.length ? (
+                        <div className="pr-chip-group">
+                          <span className="pr-chip-label">Preferred Games</span>
+                          <div className="pr-chip-row">
+                            {prAgentProfile.preferredGames.map((g) => (
+                              <span className="pr-chip pr-chip-game" key={`game-${g}`}>
+                                {g}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {prAgentProfile.preferredLanguages?.length ? (
+                        <div className="pr-chip-group">
+                          <span className="pr-chip-label">Languages</span>
+                          <div className="pr-chip-row">
+                            {prAgentProfile.preferredLanguages.map((l) => (
+                              <span className="pr-chip pr-chip-lang" key={`lang-${l}`}>
+                                {l}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {prAgentProfile.specialtyTags?.length ? (
+                        <div className="pr-chip-group">
+                          <span className="pr-chip-label">Specialties</span>
+                          <div className="pr-chip-row">
+                            {prAgentProfile.specialtyTags.map((s) => (
+                              <span className="pr-chip pr-chip-spec" key={`spec-${s}`}>
+                                {s}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <div className="pr-profile-foot">
+                        <span
+                          className={`status-pill status-${prAssignment.status.toLowerCase()}`}
+                        >
+                          ● {prAssignment.status}
+                        </span>
+                        {prAgentProfile.lastAssignedAt ? (
+                          <span
+                            className="small"
+                            title={new Date(prAgentProfile.lastAssignedAt).toLocaleString()}
+                          >
+                            Last assignment {formatRelative(prAgentProfile.lastAssignedAt)}
+                          </span>
+                        ) : null}
+                      </div>
+                    </>
+                  ) : prAssignment ? (
+                    <p className="small">
+                      PR Agent {prAssignment.prAgentId} — profile loading…
+                    </p>
+                  ) : (
+                    <div className="pr-profile-empty">
+                      <p className="small">
+                        No assignment yet. Approve the case to trigger PR assignment.
+                      </p>
+                    </div>
+                  )}
+                </section>
+
+                <section className="risk-timeline-rail">
+                  <h4>Timeline</h4>
+                  <ol className="risk-timeline-list">
+                    {riskCase.timeline
+                      .slice()
+                      .reverse()
+                      .map((event, idx) => {
+                        const tone = getActorTone(event.actorType);
+                        const summary = getPayloadSummary(
+                          event.eventType,
+                          event.payload as Record<string, unknown> | undefined
+                        );
+                        const isLatest = idx === 0;
+                        return (
+                          <li className="risk-timeline-row" key={`${event.eventType}-${idx}`}>
+                            <div
+                              className={`risk-event-dot risk-event-${tone} ${
+                                isLatest ? "is-latest" : ""
+                              }`}
+                            >
+                              {isLatest ? <span className="risk-event-pulse" /> : null}
+                            </div>
+                            <div className="risk-event-body">
+                              <div className="risk-event-head">
+                                <strong>{humanizeEventType(event.eventType)}</strong>
+                                <span
+                                  className="small risk-event-time"
+                                  title={new Date(event.createdAt).toLocaleString()}
+                                >
+                                  {formatRelative(event.createdAt)}
+                                </span>
+                              </div>
+                              <div className="small risk-event-actor">
+                                <span className={`actor-chip actor-${tone}`}>{event.actorType}</span>
+                                <span>{event.actorId}</span>
+                              </div>
+                              {summary ? (
+                                <div className="small risk-event-summary">{summary}</div>
+                              ) : null}
+                            </div>
+                          </li>
+                        );
+                      })}
+                  </ol>
+                </section>
                     </>
                   );
                 })()}

@@ -21,10 +21,34 @@ export async function GET(_request: Request, { params }: Params) {
     const assignment = await db
       .collection(webCollections.prAssignments)
       .findOne({ caseId: riskCase.caseId }, { projection: { _id: 0 }, sort: { assignedAt: -1 } });
+
+    let prAgentProfile = null;
+    if (assignment?.prAgentId) {
+      prAgentProfile = await db.collection(webCollections.prAgents).findOne(
+        { prAgentId: assignment.prAgentId },
+        {
+          projection: {
+            _id: 0,
+            prAgentId: 1,
+            name: 1,
+            active: 1,
+            maxActivePatrons: 1,
+            currentActivePatrons: 1,
+            preferredTiers: 1,
+            preferredGames: 1,
+            preferredLanguages: 1,
+            specialtyTags: 1,
+            lastAssignedAt: 1,
+          },
+        }
+      );
+    }
+
     return NextResponse.json({
       ok: true,
       case: riskCase,
       assignment,
+      prAgentProfile,
     });
   } catch (error) {
     return NextResponse.json({ ok: false, error: (error as Error).message }, { status: 500 });
