@@ -40,6 +40,8 @@ export async function GET() {
               confidence: 1,
               status: 1,
               generatedAt: 1,
+              expiresAt: 1,
+              reasonSummary: 1,
               nextBestAction: 1,
             },
           }

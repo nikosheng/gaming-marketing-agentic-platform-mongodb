@@ -103,6 +103,8 @@ type OfferDashboardResponse = {
     confidence: number;
     status: string;
     generatedAt: string;
+    expiresAt?: string;
+    reasonSummary?: string;
     nextBestAction: string;
   }>;
   recentActivities: Array<{
@@ -115,6 +117,30 @@ type OfferDashboardResponse = {
     eventTime: string;
   }>;
 };
+
+type GeneratedOffer = {
+  offerId: string;
+  title: string;
+  offerType: string;
+  estimatedCost?: number;
+  score: number;
+  reason?: string;
+  matchSignals?: string[];
+  strength?: "Strong" | "Moderate" | "Weak";
+  breakdown?: {
+    atlasScore: number;
+    vectorPart: number;
+    rulePart: number;
+  };
+};
+
+type GeneratedPatronSummary = {
+  patronId: string;
+  tier: string;
+  adt: number;
+  preferredGames?: string[];
+  pointsBalance?: number;
+} | null;
 
 type AgentMessage = {
   role: "user" | "assistant";
@@ -412,9 +438,9 @@ export default function DashboardClient() {
   const [analysisLoading, setAnalysisLoading] = useState<boolean>(false);
   const [offerDashboard, setOfferDashboard] = useState<OfferDashboardResponse | null>(null);
   const [generatePatronId, setGeneratePatronId] = useState<string>("");
-  const [generatedOffers, setGeneratedOffers] = useState<
-    Array<{ offerId: string; title: string; offerType: string; score: number }>
-  >([]);
+  const [generatedOffers, setGeneratedOffers] = useState<GeneratedOffer[]>([]);
+  const [generatedPatron, setGeneratedPatron] = useState<GeneratedPatronSummary>(null);
+  const [recoStatusFilter, setRecoStatusFilter] = useState<string>("All");
   const [agentInput, setAgentInput] = useState<string>("");
   const [agentLoading, setAgentLoading] = useState<boolean>(false);
   const [agentQuestions, setAgentQuestions] = useState<GuidanceQuestion[]>([]);
@@ -508,8 +534,14 @@ export default function DashboardClient() {
     };
   }, [drillDrawerOpen]);
 
-  const topRecommendations = useMemo(
-    () => offerDashboard?.recommendations.slice(0, 8) ?? [],
+  const filteredRecommendations = useMemo(() => {
+    const all = offerDashboard?.recommendations ?? [];
+    if (recoStatusFilter === "All") return all.slice(0, 12);
+    return all.filter((r) => r.status === recoStatusFilter).slice(0, 12);
+  }, [offerDashboard, recoStatusFilter]);
+
+  const activeOfferCount = useMemo(
+    () => (offerDashboard?.offers ?? []).filter((o) => o.status === "Active").length,
     [offerDashboard]
   );
 
@@ -526,7 +558,8 @@ export default function DashboardClient() {
     });
     const data = (await res.json()) as {
       ok: boolean;
-      generatedOffers: Array<{ offerId: string; title: string; offerType: string; score: number }>;
+      patron?: GeneratedPatronSummary;
+      generatedOffers: GeneratedOffer[];
       error?: string;
     };
     if (!data.ok) {
@@ -534,6 +567,7 @@ export default function DashboardClient() {
       return;
     }
     setGeneratedOffers(data.generatedOffers);
+    setGeneratedPatron(data.patron ?? null);
   }
 
   async function onSubmitAgentPrompt() {
@@ -1265,29 +1299,49 @@ export default function DashboardClient() {
           <div className="section-grid">
             <div className="catalog-left">
               <article className="panel-card">
-                <h2 className="panel-title">Offer Dashboard</h2>
-                <div className="metric-row">
-                  <span className="metric-chip">
-                    Recommendations {offerDashboard?.summary.recommendationCount ?? "-"}
-                  </span>
-                  <span className="metric-chip">Activities {offerDashboard?.summary.recentActivityCount ?? "-"}</span>
+                <div className="catalog-head">
+                  <h2 className="panel-title">Offer Catalog</h2>
+                  <div className="metric-row">
+                    <span className="metric-chip">Total {offerDashboard?.summary.offerCount ?? "-"}</span>
+                    <span className="metric-chip">Active {activeOfferCount}</span>
+                    <span className="metric-chip">Recs {offerDashboard?.summary.recommendationCount ?? "-"}</span>
+                  </div>
                 </div>
-                <div className="offer-list">
-                  {(offerDashboard?.offers ?? []).slice(0, 8).map((offer) => (
-                    <div className="offer-row" key={offer.offerId}>
-                      <strong>{offer.title}</strong>
-                      <div className="small">
-                        {offer.offerType} | {offer.status} | Priority {offer.priority}
+                <div className="offer-grid">
+                  {(offerDashboard?.offers ?? []).slice(0, 12).map((offer) => {
+                    const typeClass = `type-${offer.offerType.toLowerCase()}`;
+                    const statusClass = offer.status.toLowerCase();
+                    const priorityPct = Math.max(0, Math.min(100, Math.round((offer.priority / 10) * 100)));
+                    return (
+                      <div className="offer-card" key={offer.offerId}>
+                        <div className="offer-card-head">
+                          <span className="offer-card-title">{offer.title}</span>
+                          <span className={`status-pill status-${statusClass}`}>{offer.status}</span>
+                        </div>
+                        <span className={`type-chip ${typeClass}`}>{offer.offerType}</span>
+                        <div className="offer-card-meta">
+                          <span className="small">Cost</span>
+                          <strong>HK$ {formatAmount(offer.estimatedCost)}</strong>
+                        </div>
+                        <div className="offer-card-priority">
+                          <div className="small">Priority {offer.priority}/10</div>
+                          <div className="priority-bar">
+                            <div style={{ width: `${priorityPct}%` }} />
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
+                  {(offerDashboard?.offers ?? []).length === 0 ? (
+                    <p className="small">No offers loaded.</p>
+                  ) : null}
                 </div>
               </article>
 
               <article className="panel-card">
                 <h2 className="panel-title">Quick Offer Lookup</h2>
                 <p className="small">Generate top matches for one patron profile.</p>
-                <div className="actions">
+                <div className="lookup-row">
                   <input
                     className="input"
                     value={generatePatronId}
@@ -1298,14 +1352,144 @@ export default function DashboardClient() {
                     Generate
                   </button>
                 </div>
-                {generatedOffers.map((item) => (
-                  <div className="offer-row" key={`${item.offerId}-${item.title}`}>
-                    <strong>{item.title}</strong>
-                    <div className="small">
-                      {item.offerId} | {item.offerType} | score {item.score.toFixed(4)}
-                    </div>
+                {generatedPatron ? (
+                  <div className="lookup-patron-chip">
+                    <span className="tier-pill">{generatedPatron.tier}</span>
+                    <span className="small">{generatedPatron.patronId}</span>
+                    <span className="muted-chip">ADT {formatAmount(generatedPatron.adt)}</span>
+                    {(generatedPatron.preferredGames ?? []).map((g) => (
+                      <span className="muted-chip" key={`pg-${g}`}>
+                        {g}
+                      </span>
+                    ))}
+                    {generatedPatron.pointsBalance !== undefined ? (
+                      <span className="muted-chip">
+                        Points {formatAmount(generatedPatron.pointsBalance)}
+                      </span>
+                    ) : null}
                   </div>
-                ))}
+                ) : null}
+                {generatedOffers.length > 0 ? (
+                  <div className="generated-offer-grid">
+                    {generatedOffers.map((item) => {
+                      const typeClass = `type-${item.offerType.toLowerCase()}`;
+                      const pct = Math.max(0, Math.min(100, Math.round(item.score * 100)));
+                      const tone = item.score >= 0.7 ? "high" : item.score >= 0.45 ? "med" : "low";
+                      const tip = item.breakdown
+                        ? `Atlas raw: ${(item.breakdown.atlasScore * 100).toFixed(0)}%\n` +
+                          `Vector contribution: ${(item.breakdown.vectorPart * 100).toFixed(0)}%\n` +
+                          `Rule contribution:   ${(item.breakdown.rulePart * 100).toFixed(0)}%\n` +
+                          `Blended (0.6 vec + 0.4 rule): ${pct}%`
+                        : "";
+                      return (
+                        <div className="generated-offer-card" key={`${item.offerId}-${item.title}`}>
+                          <div className="offer-card-head">
+                            <span className={`type-chip ${typeClass}`}>{item.offerType}</span>
+                            <div className="score-wrap">
+                              <strong className="score-value">{pct}%</strong>
+                              {item.breakdown ? (
+                                <span
+                                  className="score-info"
+                                  data-tip={tip}
+                                  aria-label="Score breakdown"
+                                >
+                                  i
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+                          <div className="offer-card-title">{item.title}</div>
+                          <div className={`score-bar score-bar-${tone}`}>
+                            <div style={{ width: `${pct}%` }} />
+                          </div>
+                          {item.reason ? <p className="small reason-text">{item.reason}</p> : null}
+                          {item.matchSignals && item.matchSignals.length > 0 ? (
+                            <div className="signals">
+                              {item.matchSignals.map((s) => (
+                                <span className="signal-chip" key={`${item.offerId}-${s}`}>
+                                  {s}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </article>
+
+              <article className="panel-card">
+                <div className="catalog-head">
+                  <h2 className="panel-title">Active Recommendations</h2>
+                  <select
+                    className="input reco-filter"
+                    value={recoStatusFilter}
+                    onChange={(e) => setRecoStatusFilter(e.target.value)}
+                  >
+                    <option value="All">All Statuses</option>
+                    <option value="Proposed">Proposed</option>
+                    <option value="Approved">Approved</option>
+                    <option value="Sent">Sent</option>
+                    <option value="Accepted">Accepted</option>
+                    <option value="Rejected">Rejected</option>
+                  </select>
+                </div>
+                {filteredRecommendations.length === 0 ? (
+                  <p className="small">No recommendations match the current filter.</p>
+                ) : (
+                  <div className="recommendation-grid">
+                    {filteredRecommendations.map((rec) => {
+                      const statusClass = rec.status.toLowerCase();
+                      const scorePct = Math.round(rec.relevanceScore * 100);
+                      const confPct = Math.round(rec.confidence * 100);
+                      const scoreTone =
+                        rec.relevanceScore >= 0.75 ? "high" : rec.relevanceScore >= 0.5 ? "med" : "low";
+                      return (
+                        <div className="reco-card" key={rec.recommendationId}>
+                          <div className="offer-card-head">
+                            <div className="reco-link">
+                              <span className="reco-patron">{rec.patronId}</span>
+                              <span className="reco-arrow"> → </span>
+                              <span className="reco-offer">{rec.offerId}</span>
+                            </div>
+                            <span className={`status-pill status-${statusClass}`}>{rec.status}</span>
+                          </div>
+                          {rec.reasonSummary ? (
+                            <p className="reco-reason">
+                              <strong>Reason:</strong> {rec.reasonSummary}
+                            </p>
+                          ) : null}
+                          {rec.nextBestAction ? (
+                            <p className="reco-action">
+                              <strong>Next:</strong> {rec.nextBestAction}
+                            </p>
+                          ) : null}
+                          <div className="reco-bars">
+                            <div className="reco-bar-block">
+                              <div className="reco-bar-head">
+                                <span className="small">Score</span>
+                                <strong>{scorePct}%</strong>
+                              </div>
+                              <div className={`score-bar score-bar-${scoreTone}`}>
+                                <div style={{ width: `${scorePct}%` }} />
+                              </div>
+                            </div>
+                            <div className="reco-bar-block">
+                              <div className="reco-bar-head">
+                                <span className="small">Confidence</span>
+                                <strong>{confPct}%</strong>
+                              </div>
+                              <div className="priority-bar">
+                                <div style={{ width: `${confPct}%` }} />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </article>
             </div>
 
@@ -1446,21 +1630,6 @@ export default function DashboardClient() {
                 </div>
               </div>
             ) : null}
-              <div className="recommendation-strip">
-                <h3>Latest Recommendations</h3>
-                <div className="recommendation-list">
-                  {topRecommendations.map((rec) => (
-                    <div className="recommendation-card" key={rec.recommendationId}>
-                      <strong>
-                        {rec.patronId} - {rec.offerId}
-                      </strong>
-                      <span>
-                        {rec.status} | score {rec.relevanceScore.toFixed(3)} | conf {rec.confidence.toFixed(3)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
               </article>
             </section>
           </div>
