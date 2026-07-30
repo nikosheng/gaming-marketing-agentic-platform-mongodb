@@ -1,4 +1,4 @@
-import { MongoClient } from "mongodb";
+import { MongoClient, ObjectId } from "mongodb";
 import dotenv from "dotenv";
 import { config } from "../config.js";
 import { webCollections } from "../web/collections.js";
@@ -9,7 +9,17 @@ const VOYAGE_API_URL = "https://api.voyageai.com/v1/embeddings";
 const MODEL = "voyage-4";
 const BATCH_SIZE = 50;
 
+const BEHAVIOR_TAGS = ["Aggressive", "Conservative", "LateNight", "CardCounterWatch", "PromoSeeker"] as const;
+const GAME_TYPES = ["Baccarat", "Blackjack", "Roulette", "SicBo", "DragonTiger", "PokerRoom"] as const;
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Pick `count` random items from an array without repeating. */
+function randomSample<T>(arr: readonly T[], min: number, max: number): T[] {
+  const count = min + Math.floor(Math.random() * (max - min + 1));
+  const shuffled = [...arr].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, Math.min(count, arr.length));
+}
 
 async function generateEmbeddingsBatch(texts: string[]): Promise<number[][]> {
   const apiKey = config.voyageApiKey;
@@ -48,7 +58,17 @@ async function backfillOffers(db: any) {
   for (let i = 0; i < offers.length; i += BATCH_SIZE) {
     if (i > 0) await sleep(21000); // 3 RPM limit
     const batch = offers.slice(i, i + BATCH_SIZE);
-    const texts = batch.map((o: any) => `${o.title} ${o.description}`);
+    const texts = batch.map((o: any) => {
+      const games = (o.targetGameTypes as string[] ?? []).join(", ") || "all games";
+      const rules = (o.eligibilityRules as string[] ?? []).join("; ") || "none";
+      return (
+        `Offer type: ${o.offerType}. ` +
+        `Title: ${o.title}. ` +
+        `Description: ${o.description} ` +
+        `Target games: ${games}. ` +
+        `Eligibility: ${rules}.`
+      );
+    });
     
     console.log(`Processing offers batch ${i / BATCH_SIZE + 1}...`);
     const embeddings = await generateEmbeddingsBatch(texts);
@@ -63,21 +83,95 @@ async function backfillOffers(db: any) {
   console.log("Offer catalog backfill complete.");
 }
 
+/**
+ * Ensure every patron has at least one active session in patron_table_sessions.
+ * For patrons without any active session, a synthetic session is inserted so
+ * that behaviorTags are always available for embedding generation.
+ */
+async function ensurePatronSessions(db: any, patrons: any[]): Promise<Map<string, string[]>> {
+  console.log("Ensuring all patrons have an active session...");
+  const sessionsCollection = db.collection(webCollections.sessions);
+  const tablesCollection = db.collection(webCollections.tables);
+
+  // Load all active sessions and index by patronId
+  const activeSessions = await sessionsCollection
+    .find({ isActive: true }, { projection: { patronId: 1, behaviorTags: 1 } })
+    .toArray();
+
+  const sessionMap = new Map<string, string[]>();
+  for (const s of activeSessions) {
+    sessionMap.set(s.patronId, s.behaviorTags ?? []);
+  }
+
+  // Find patrons that have no active session
+  const missingPatronIds = patrons
+    .map((p: any) => p.patronId)
+    .filter((id: string) => !sessionMap.has(id));
+
+  if (missingPatronIds.length === 0) {
+    console.log("All patrons already have an active session.");
+    return sessionMap;
+  }
+
+  console.log(`Generating synthetic sessions for ${missingPatronIds.length} patrons...`);
+
+  // Fetch a table to assign — fall back to a placeholder tableId if none exist
+  const anyTable = await tablesCollection.findOne({}, { projection: { tableId: 1 } });
+  const fallbackTableId = anyTable?.tableId ?? "T-0001";
+
+  const now = new Date();
+  const newSessions = missingPatronIds.map((patronId: string) => {
+    const tags = randomSample(BEHAVIOR_TAGS, 1, 2);
+    const seatedAt = new Date(now.getTime() - Math.random() * 3 * 60 * 60 * 1000); // up to 3h ago
+    sessionMap.set(patronId, tags);
+    return {
+      _id: new ObjectId(),
+      patronId,
+      tableId: fallbackTableId,
+      seatedAt,
+      lastActionAt: new Date(seatedAt.getTime() + Math.random() * (now.getTime() - seatedAt.getTime())),
+      sessionBetAmount: Math.floor(200 + Math.random() * 9800),
+      currentStackEstimate: Math.floor(500 + Math.random() * 49500),
+      behaviorTags: tags,
+      isActive: true,
+    };
+  });
+
+  await sessionsCollection.insertMany(newSessions);
+  console.log(`Inserted ${newSessions.length} synthetic sessions.`);
+
+  return sessionMap;
+}
+
 async function backfillPatrons(db: any) {
   console.log("Starting backfill for patron_profiles...");
   const collection = db.collection(webCollections.patrons);
   const patrons = await collection.find({}).toArray();
   console.log(`Found ${patrons.length} patrons to process.`);
 
+  // Build a patronId -> behaviorTags map, inserting synthetic sessions where needed
+  const sessionMap = await ensurePatronSessions(db, patrons);
+
   for (let i = 0; i < patrons.length; i += BATCH_SIZE) {
     // Always sleep before patron batches because we just finished offers
-    await sleep(21000); 
+    await sleep(21000);
     const batch = patrons.slice(i, i + BATCH_SIZE);
-    // For patrons, we embed their tier and preferred games as a proxy for "preference"
-    const texts = batch.map((p: any) => 
-      `Patron tier ${p.tier} who prefers games: ${p.preferredGames.join(", ")}`
-    );
-    
+
+    // Build a rich preference text that covers tier, games, ADT, points, risk flags and behavior
+    const texts = batch.map((p: any) => {
+      const games = (p.preferredGames as string[] ?? []).join(", ") || "unknown";
+      const riskFlags = (p.riskFlags as string[] ?? []).filter((f: string) => f !== "None").join(", ") || "none";
+      const behaviorTags = (sessionMap.get(p.patronId) ?? []).join(", ") || "unknown";
+      return (
+        `Patron tier ${p.tier}, ` +
+        `ADT ${p.adt}, ` +
+        `prefers games: ${games}, ` +
+        `points balance ${p.pointsBalance ?? 0}, ` +
+        `risk flags: ${riskFlags}, ` +
+        `behavior: ${behaviorTags}`
+      );
+    });
+
     console.log(`Processing patrons batch ${i / BATCH_SIZE + 1}...`);
     const embeddings = await generateEmbeddingsBatch(texts);
 

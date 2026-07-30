@@ -102,25 +102,24 @@ type Recommendation = {
 
 const COOLDOWN_MINUTES = 20;
 const PROPOSAL_TTL_MINUTES = 30;
-const MAX_DELTA = 0.25; // ±25%
-const HIGH_ROLLER_MAX_DELTA = 0.1; // ±10%
 const HIGH_ROLLER_KEYWORDS = ["VIP", "High Roller", "HighRoller", "Premium"];
 
 const GAME_FLOORS: Record<GameType, number> = {
-  Baccarat: 100,
-  Blackjack: 50,
-  Roulette: 25,
-  SicBo: 25,
-  Poker: 100,
+  Baccarat: 300,
+  Blackjack: 300,
+  Roulette: 300,
+  SicBo: 300,
+  Poker: 300,
 };
 
 // Allowed min-bet steps per game (snap target to nearest step).
+// Standardized to the casino's round-number policy: {300, 500, 800, 1000}.
 const GAME_STEPS: Record<GameType, number[]> = {
-  Baccarat: [100, 200, 300, 500, 1000, 2000, 5000, 10000, 20000, 50000],
-  Blackjack: [50, 100, 200, 300, 500, 1000, 2000, 5000, 10000],
-  Roulette: [25, 50, 100, 200, 500, 1000, 2000, 5000],
-  SicBo: [25, 50, 100, 200, 500, 1000, 2000],
-  Poker: [100, 200, 500, 1000, 2000, 5000, 10000],
+  Baccarat: [300, 500, 800, 1000],
+  Blackjack: [300, 500, 800, 1000],
+  Roulette: [300, 500, 800, 1000],
+  SicBo: [300, 500, 800, 1000],
+  Poker: [300, 500, 800, 1000],
 };
 
 // ---------- Helpers ----------
@@ -213,7 +212,7 @@ Explain the recommendation in plain business language. Do not invent numbers.`;
           { role: "user", content: userPrompt },
         ],
         temperature: 0.3,
-        max_tokens: 200,
+        max_completion_tokens: 200,
       }),
     });
     if (!res.ok) return null;
@@ -327,6 +326,25 @@ async function observeNode(db: Db, state: typeof AgentState.State) {
     ])
     .toArray()) as ActiveSession[];
 
+  // Override stored snapshot fields with live values so the optimizer reads the
+  // SAME occupancy/patron-count the heatmap shows. The stored fields are
+  // snapshot-time values that may be stale.
+  if (sessions.length > 0) {
+    const livePatronCount = sessions.length;
+    const liveAvgBet = Math.round(
+      sessions.reduce((sum, s) => sum + Number(s.sessionBetAmount ?? 0), 0) /
+        livePatronCount
+    );
+    const liveOccupancyRate = Number(Math.min(1, livePatronCount / 9).toFixed(3));
+    table.patronCount = livePatronCount;
+    table.avgBetAmount = liveAvgBet;
+    table.occupancyRate = liveOccupancyRate;
+  } else {
+    table.patronCount = 0;
+    table.avgBetAmount = 0;
+    table.occupancyRate = 0;
+  }
+
   const history = (await db
     .collection(webCollections.tableStateHistory)
     .find(
@@ -409,18 +427,32 @@ function elasticityNode(state: typeof AgentState.State) {
 
   const occupancyScore = clamp(table.occupancyRate, 0, 1);
   const velocityPos = clamp((trend.velocity + 1) / 2, 0, 1); // 0..1
-  const stickiness = 1 - dist.lowBetShare; // 0..1 (higher = less price-sensitive)
+
+  // When there are no active sessions, stickiness cannot be inferred from
+  // lowBetShare (which defaults to 0 on an empty bets array). Treat it as
+  // neutral (0) so an empty table does not get an artificial positive signal.
+  const hasActiveSessions = state.sessions.length > 0;
+  const stickiness = hasActiveSessions ? 1 - dist.lowBetShare : 0; // 0..1
 
   // Composite demand signal (0..1). Strong demand favors raising min bet.
-  const demandSignal = clamp(
+  // For a genuinely empty table, force demandSignal to 0 so the direction
+  // filter always routes to HOLD-or-LOWER candidates.
+  const rawDemandSignal = clamp(
     0.5 * occupancyScore + 0.3 * velocityPos + 0.2 * stickiness,
     0,
     1
   );
+  const demandSignal = table.patronCount === 0 ? 0 : rawDemandSignal;
 
-  const baselinePatrons = Math.max(1, table.patronCount);
+  // Use true patron count for baseline; do NOT clamp to 1 here — an empty
+  // table has a real baseline of 0. The revenue comparison must reflect that
+  // ANY patron attracted by a lower floor is a genuine gain.
+  const truePatronCount = table.patronCount;
+  const baselinePatrons = Math.max(1, truePatronCount); // still need ≥1 as divisor
   const baselineAvgBet = Math.max(1, table.avgBetAmount);
-  const baselineRevenue = baselinePatrons * baselineAvgBet;
+  // When the table is empty, set baseline revenue to 0 so that lowering
+  // the floor (which attracts new patrons) always scores positively.
+  const baselineRevenue = truePatronCount === 0 ? 0 : baselinePatrons * baselineAvgBet;
 
   const deltaSet = [-0.25, -0.1, 0, 0.1, 0.25];
   const candidates: Candidate[] = deltaSet.map((delta) => {
@@ -428,13 +460,21 @@ function elasticityNode(state: typeof AgentState.State) {
 
     // Estimated retention: raising drives away low-bet share proportionally;
     // lowering attracts marginal patrons (modest).
+    // For an empty table, the attraction multiplier for a lower floor is
+    // stronger — vacancies are filled, not just marginal additions.
     let retention = 1;
     if (delta > 0) {
       retention = 1 - clamp(delta * (dist.lowBetShare + 0.2) * 2, 0, 0.7);
     } else if (delta < 0) {
-      retention = 1 + clamp(Math.abs(delta) * 0.4 * (1 - occupancyScore), 0, 0.25);
+      if (truePatronCount === 0) {
+        // Empty table: model how many patrons a lower floor attracts from
+        // scratch. A 25% floor cut is estimated to fill ~2–3 seats.
+        retention = 1 + clamp(Math.abs(delta) * 3.0 * (1 - occupancyScore), 0, 2.0);
+      } else {
+        retention = 1 + clamp(Math.abs(delta) * 0.4 * (1 - occupancyScore), 0, 0.25);
+      }
     }
-    retention = clamp(retention, 0.2, 1.3);
+    retention = clamp(retention, 0.2, 3.0);
 
     // Estimated avg bet: anchored to max(new floor * 1.15, current p50).
     // When raising, average drifts up; when lowering, average drifts toward p50.
@@ -446,7 +486,12 @@ function elasticityNode(state: typeof AgentState.State) {
 
     const estimatedPatrons = baselinePatrons * retention;
     const estimatedRevenue = estimatedPatrons * estimatedAvgBet;
-    const expectedRevenuePct = (estimatedRevenue - baselineRevenue) / baselineRevenue;
+    // When baseline is 0 (empty table), use absolute revenue as the score
+    // so that any positive-revenue candidate beats the hold-at-0 baseline.
+    const expectedRevenuePct =
+      baselineRevenue === 0
+        ? estimatedRevenue / Math.max(1, table.minBet) // normalise by minBet for comparability
+        : (estimatedRevenue - baselineRevenue) / baselineRevenue;
 
     return {
       minBet: Math.round(targetMinBet),
@@ -489,43 +534,40 @@ function guardrailsNode(state: typeof AgentState.State) {
   const dist = state.distribution;
   const trend = state.trend;
   const isHighRoller = isHighRollerZone(table.zone);
-  const maxDelta = isHighRoller ? HIGH_ROLLER_MAX_DELTA : MAX_DELTA;
 
   const gameFloor = GAME_FLOORS[table.gameType] ?? 25;
   const steps = GAME_STEPS[table.gameType] ?? [25, 50, 100, 200, 500, 1000];
 
-  // Filter by max delta cap and absolute floor.
-  const allowed = state.candidates.filter((c) => Math.abs(c.deltaPct) <= maxDelta);
-  const top = allowed[0];
+  // Top candidate is already ranked by expectedRevenuePct from elasticityNode.
+  const top = state.candidates[0];
 
-  if (!top) {
-    return {
-      decision: {
-        recommendedMinBet: table.minBet,
-        deltaPct: 0,
-        expectedRevenueUpliftPct: 0,
-        confidence: 0.4,
-        reasons: ["All candidates exceed delta guardrail. Holding current min bet."],
-        skipped: false,
-      } as Decision,
-    };
-  }
+  // Direction-aware step selection:
+  // LOWER → pick the nearest step strictly below currentMinBet (i.e. drop one rung).
+  // RAISE → pick the nearest step strictly above currentMinBet (i.e. climb one rung).
+  // HOLD  → only when the step ladder has nowhere left to go in the desired direction.
+  let snapped: number;
+  const direction = top.deltaPct < 0 ? "lower" : top.deltaPct > 0 ? "raise" : "hold";
 
-  // Snap target to allowed step and enforce game floor.
-  let snapped = snapToStep(top.minBet, steps);
-  if (snapped < gameFloor) snapped = gameFloor;
-
-  const realizedDelta = (snapped - table.minBet) / Math.max(1, table.minBet);
-  if (Math.abs(realizedDelta) > maxDelta) {
-    // Snapping pushed past cap — choose nearest in-range step.
-    const inRangeSteps = steps.filter(
-      (s) => Math.abs((s - table.minBet) / Math.max(1, table.minBet)) <= maxDelta && s >= gameFloor
-    );
-    if (inRangeSteps.length > 0) {
-      snapped = snapToStep(table.minBet * (1 + top.deltaPct), inRangeSteps);
-    } else {
+  if (direction === "lower") {
+    const lowerSteps = steps.filter((s) => s < table.minBet && s >= gameFloor);
+    if (lowerSteps.length === 0) {
+      // Already at the floor — cannot go lower.
       snapped = table.minBet;
+    } else {
+      // Largest value below currentMinBet = one rung down.
+      snapped = Math.max(...lowerSteps);
     }
+  } else if (direction === "raise") {
+    const raiseSteps = steps.filter((s) => s > table.minBet);
+    if (raiseSteps.length === 0) {
+      // Already at the ceiling — cannot go higher.
+      snapped = table.minBet;
+    } else {
+      // Smallest value above currentMinBet = one rung up.
+      snapped = Math.min(...raiseSteps);
+    }
+  } else {
+    snapped = table.minBet;
   }
 
   const finalDelta = (snapped - table.minBet) / Math.max(1, table.minBet);
@@ -539,8 +581,11 @@ function guardrailsNode(state: typeof AgentState.State) {
     `Average bet is ${dist.betHeadroom.toFixed(2)}x current min; p75 ${dist.p75}, p90 ${dist.p90}`
   );
   reasons.push(`Low-bet share ${(dist.lowBetShare * 100).toFixed(0)}%`);
-  if (isHighRoller) reasons.push("High-roller zone: tighter ±10% cap applied");
-  if (finalDelta === 0) reasons.push("No materially better option than holding current min bet");
+  if (isHighRoller) reasons.push("High-roller zone applied");
+  if (finalDelta === 0 && direction === "lower")
+    reasons.push(`Already at floor (${gameFloor}) — cannot lower further`);
+  if (finalDelta === 0 && direction === "raise")
+    reasons.push(`Already at ceiling (${steps[steps.length - 1]}) — cannot raise further`);
 
   // Confidence: based on history depth, demand consistency, and absolute uplift size.
   const historyConfidence = clamp(trend.samples / 10, 0, 1) * 0.4;

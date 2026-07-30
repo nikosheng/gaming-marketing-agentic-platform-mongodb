@@ -65,9 +65,11 @@ export function generatePatrons(count: number): PatronProfile[] {
   });
 }
 
+const ALLOWED_MIN_BETS = [300, 500, 800, 1000] as const;
+
 export function generateTables(count: number): TableStateSnapshot[] {
   return Array.from({ length: count }, (_, i) => {
-    const minBet = faker.number.int({ min: 100, max: 2000 });
+    const minBet = faker.helpers.arrayElement(ALLOWED_MIN_BETS);
     return {
       tableId: buildTableId(i),
       tableName: `Table ${i + 1}`,

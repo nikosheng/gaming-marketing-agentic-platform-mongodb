@@ -367,3 +367,161 @@ export interface MinBetAudit {
   actorId: string;
   at: Date;
 }
+
+// ---------- Alert Dashboard ----------
+
+export type ConditionType =
+  | "CONSECUTIVE_ROUNDS_BET_THRESHOLD"
+  | "CUMULATIVE_ROUNDS_BET_THRESHOLD"
+  | "SINGLE_ROUND_ADT_MULTIPLIER"
+  | "SESSION_BET_ABOVE"
+  | "TIER_MATCH"
+  | "BEHAVIOR_TAG_MATCH";
+
+export interface ParsedCondition {
+  type: ConditionType;
+  params: Record<string, number | string | string[]>;
+  confidence: number;
+}
+
+export interface AlertRule {
+  _id?: ObjectId;
+  ruleId: string;
+  name: string;
+  nlDescription: string;
+  conditions: ParsedCondition[];
+  conditionLogic: "OR";
+  status: "Active" | "Paused";
+  totalTriggered: number;
+  lastTriggeredAt?: Date;
+  createdAt: Date;
+}
+
+export interface TableRoundSnapshot {
+  _id?: ObjectId;
+  tableId: string;
+  roundNumber: number;
+  patronId: string;
+  betAmount: number;
+  adt: number;
+  tier: string;
+  behaviorTags: string[];
+  maskedName: string;
+  recordedAt: Date;
+}
+
+export interface PatronAlert {
+  _id?: ObjectId;
+  alertId: string;
+  ruleId: string;
+  ruleName: string;
+  patronId: string;
+  tableId: string;
+  triggeredConditions: Array<{
+    type: ConditionType;
+    evidence: Record<string, unknown>;
+  }>;
+  patronSnapshot: {
+    maskedName: string;
+    tier: string;
+    adt: number;
+    behaviorTags: string[];
+    riskFlags: string[];
+    preferredGames: string[];
+  };
+  tableSnapshot: {
+    tableName: string;
+    gameType: string;
+    zone: string;
+  };
+  llmRationale?: string;
+  status: "New" | "Acknowledged";
+  triggeredAt: Date;
+}
+
+export interface AlertRulePreview {
+  ruleName: string;
+  nlDescription: string;
+  conditions: ParsedCondition[];
+  needsClarification: boolean;
+  clarificationQuestion?: string;
+}
+
+// ---------- Patron Interaction History ----------
+
+export type InteractionType =
+  | "ROOM_COMP"
+  | "FB_COMP"
+  | "REBATE"
+  | "EVENT_INVITE"
+  | "OUTREACH"
+  | "TRANSFER";
+
+export interface PatronInteractionRecord {
+  _id?: ObjectId;
+  interactionId: string;           // "INT-{uuid}"
+  patronId: string;
+  type: InteractionType;
+  detail: {
+    // ROOM_COMP
+    roomType?: string;
+    checkIn?: Date;
+    checkOut?: Date;
+    roomNights?: number;
+    roomValue?: number;
+    // FB_COMP
+    venue?: string;
+    fbAmount?: number;
+    // REBATE
+    rebateAmount?: number;
+    rebateRate?: number;
+    // EVENT_INVITE
+    eventName?: string;
+    eventDate?: Date;
+    attended?: boolean;
+    // OUTREACH
+    channel?: "Phone" | "In-Person" | "WeChat" | "WhatsApp";
+    outcome?: "Positive" | "Neutral" | "No Answer" | "Declined";
+    notes?: string;
+    // TRANSFER
+    transferType?: "Airport" | "Hotel" | "Venue";
+    vehicleClass?: "Standard" | "Luxury";
+  };
+  totalValueHKD: number;
+  occurredAt: Date;
+  recordedBy: string;              // prAgentId or "system"
+  recordedAt: Date;
+  linkedAlertId?: string;
+  patronTierAtTime?: PatronTier;
+  patronAdtAtTime?: number;
+}
+
+// ---------- Patron Analysis Report ----------
+
+export type ReportStatus = "Draft" | "Acknowledged" | "Actioned";
+
+export interface NextActionRecommendation {
+  priority: 1 | 2 | 3;
+  actionType: InteractionType | "TIER_UPGRADE" | "CUSTOM";
+  title: string;
+  rationale: string;
+  urgency: "Immediate" | "Within48h" | "ThisWeek";
+  estimatedValue?: number;
+}
+
+export interface PatronAnalysisReport {
+  _id?: ObjectId;
+  reportId: string;                // "RPT-{uuid}"
+  patronId: string;
+  triggeredByAlertId: string;
+  profileSummary: string;
+  interactionHistory: string;
+  behaviorPattern: string;
+  riskAssessment: string;
+  recommendations: NextActionRecommendation[];
+  suggestedPrId?: string;
+  suggestedPrName?: string;
+  generatedAt: Date;
+  modelUsed: string;
+  status: ReportStatus;
+}

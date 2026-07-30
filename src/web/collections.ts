@@ -11,4 +11,12 @@ export const webCollections = {
   minBetRecommendations: "table_minbet_recommendations",
   minBetAudit: "table_minbet_audit",
   offerApprovalAudit: "offer_approval_audit",
+  // Alert Dashboard
+  alertRules: "alert_rules",
+  patronAlerts: "patron_alerts",
+  tableRoundHistory: "table_round_history",
+  tableRoundCounters: "table_round_counters",
+  // Patron History Analysis
+  patronInteractions: "patron_interaction_history",
+  patronAnalysisReports: "patron_analysis_reports",
 };

@@ -17,6 +17,14 @@ export const collections = {
   minBetRecommendations: "table_minbet_recommendations",
   minBetAudit: "table_minbet_audit",
   offerApprovalAudit: "offer_approval_audit",
+  // Alert Dashboard
+  alertRules: "alert_rules",
+  patronAlerts: "patron_alerts",
+  tableRoundHistory: "table_round_history",
+  tableRoundCounters: "table_round_counters",
+  // Patron History Analysis
+  patronInteractions: "patron_interaction_history",
+  patronAnalysisReports: "patron_analysis_reports",
 };
 
 async function createVectorIndexIfNeeded(
@@ -170,4 +178,63 @@ export async function ensureIndexes(db: Db): Promise<void> {
     "preferenceEmbedding"
   );
   await createVectorIndexIfNeeded(db, collections.offers, "offer_vector_idx", "offerEmbedding");
+
+  // ---------- Alert Dashboard indexes ----------
+
+  await db.collection(collections.alertRules).createIndex({ ruleId: 1 }, { unique: true });
+  await db.collection(collections.alertRules).createIndex({ status: 1, createdAt: -1 });
+
+  await db.collection(collections.patronAlerts).createIndex({ alertId: 1 }, { unique: true });
+  await db.collection(collections.patronAlerts).createIndex({ ruleId: 1, triggeredAt: -1 });
+  await db.collection(collections.patronAlerts).createIndex({ patronId: 1, triggeredAt: -1 });
+  await db.collection(collections.patronAlerts).createIndex({ tableId: 1, triggeredAt: -1 });
+  await db.collection(collections.patronAlerts).createIndex({ status: 1, triggeredAt: -1 });
+  // 30-day TTL for patron alerts
+  await db
+    .collection(collections.patronAlerts)
+    .createIndex({ triggeredAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 30 });
+
+  await db
+    .collection(collections.tableRoundHistory)
+    .createIndex({ tableId: 1, roundNumber: 1, patronId: 1 });
+  await db
+    .collection(collections.tableRoundHistory)
+    .createIndex({ tableId: 1, patronId: 1, roundNumber: -1 });
+  // 7-day TTL for round history
+  await db
+    .collection(collections.tableRoundHistory)
+    .createIndex({ recordedAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 7 });
+
+  await db.collection(collections.tableRoundCounters).createIndex({ tableId: 1 }, { unique: true });
+
+  // ---------- Patron Interaction History indexes ----------
+
+  await db
+    .collection(collections.patronInteractions)
+    .createIndex({ interactionId: 1 }, { unique: true });
+  await db
+    .collection(collections.patronInteractions)
+    .createIndex({ patronId: 1, occurredAt: -1 });
+  await db
+    .collection(collections.patronInteractions)
+    .createIndex({ recordedBy: 1, occurredAt: -1 });
+  await db
+    .collection(collections.patronInteractions)
+    .createIndex({ type: 1, occurredAt: -1 });
+  // No TTL — interaction history is permanent
+
+  // ---------- Patron Analysis Report indexes ----------
+
+  await db
+    .collection(collections.patronAnalysisReports)
+    .createIndex({ reportId: 1 }, { unique: true });
+  await db
+    .collection(collections.patronAnalysisReports)
+    .createIndex({ patronId: 1, generatedAt: -1 });
+  await db
+    .collection(collections.patronAnalysisReports)
+    .createIndex({ triggeredByAlertId: 1 }, { unique: true });
+  await db
+    .collection(collections.patronAnalysisReports)
+    .createIndex({ status: 1, generatedAt: -1 });
 }

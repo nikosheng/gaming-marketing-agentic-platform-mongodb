@@ -157,6 +157,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Fetch behaviorTags from the patron's most recent active session
+    const session = await db
+      .collection(webCollections.sessions)
+      .findOne(
+        { patronId: body.patronId, isActive: true },
+        { projection: { _id: 0, behaviorTags: 1 } }
+      );
+    const behaviorTags: string[] = (session?.behaviorTags as string[]) ?? [];
+
     const preferenceEmbedding = (patron.preferenceEmbedding ?? []) as number[];
 
     type Candidate = {
@@ -281,6 +290,7 @@ export async function POST(request: NextRequest) {
         adt: patron.adt,
         preferredGames: patron.preferredGames ?? [],
         pointsBalance: patron.pointsBalance ?? 0,
+        behaviorTags,
       },
       generatedOffers: reranked,
       generator,
