@@ -4625,3 +4625,512 @@ body.drawer-open {
   font-family: monospace;
   margin-left: auto;
 }
+
+/* ================================================================
+   PR EFFICIENCY SECTION
+   ================================================================ */
+
+.pr-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.pr-section-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #edf3ff;
+  letter-spacing: 0.03em;
+}
+
+.pr-section-desc {
+  font-size: 0.80rem;
+  color: #6880a0;
+  margin: 0 0 14px;
+  line-height: 1.5;
+}
+
+.pr-refresh-btn {
+  padding: 4px 12px;
+  border-radius: 7px;
+  border: 1px solid rgba(80, 130, 220, 0.35);
+  background: rgba(30, 60, 130, 0.20);
+  color: #90beff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.pr-refresh-btn:hover:not(:disabled) { background: rgba(40, 80, 170, 0.35); }
+.pr-refresh-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.pr-empty-state {
+  padding: 28px 16px;
+  text-align: center;
+  color: rgba(180, 195, 220, 0.35);
+  font-size: 0.83rem;
+  border: 1px dashed rgba(100, 130, 200, 0.18);
+  border-radius: 8px;
+}
+
+/* ── PR Metrics Grid ── */
+.pr-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px;
+}
+
+.pr-metric-card {
+  background: rgba(10, 20, 42, 0.60);
+  border: 1px solid rgba(80, 120, 200, 0.22);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.15s;
+}
+.pr-metric-card:hover { border-color: rgba(100, 160, 255, 0.40); }
+.pr-metric-card-inactive { opacity: 0.55; }
+
+.pr-metric-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pr-metric-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #1a3a70, #0f2248);
+  border: 1px solid rgba(100, 150, 255, 0.30);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: #a0c0ff;
+  flex-shrink: 0;
+}
+
+.pr-metric-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.pr-metric-name {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #d5e3fb;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pr-metric-id {
+  font-size: 0.65rem;
+  color: #3a5070;
+  font-family: monospace;
+}
+
+.pr-inactive-badge {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #7080a0;
+  background: rgba(80, 90, 120, 0.22);
+  border: 1px solid rgba(80, 90, 120, 0.30);
+  border-radius: 4px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+}
+
+.pr-metric-stats-row {
+  display: flex;
+  gap: 0;
+  border: 1px solid rgba(60, 90, 160, 0.20);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.pr-metric-stat-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 4px;
+  gap: 2px;
+  border-right: 1px solid rgba(60, 90, 160, 0.18);
+}
+.pr-metric-stat-item:last-child { border-right: none; }
+
+.pr-metric-stat-value {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #c8d8f0;
+}
+
+.pr-metric-value-gold {
+  color: #ffd9a1;
+}
+
+.pr-metric-stat-label {
+  font-size: 0.60rem;
+  color: #5a7090;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.pr-type-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pr-type-pill {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: rgba(50, 80, 150, 0.25);
+  border: 1px solid rgba(80, 120, 200, 0.25);
+  color: #90b0e0;
+}
+
+.pr-tier-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pr-tier-chip {
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(80, 60, 20, 0.30);
+  border: 1px solid rgba(200, 160, 60, 0.25);
+  color: #c8a860;
+}
+
+.pr-last-active {
+  font-size: 0.68rem;
+  color: #4a6080;
+}
+.pr-no-activity { color: #2a3848; }
+
+/* ── KPI Template Chips ── */
+.kpi-template-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.kpi-template-chip {
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(80, 130, 220, 0.35);
+  background: rgba(20, 40, 100, 0.25);
+  color: #90b8f0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.kpi-template-chip:hover {
+  background: rgba(30, 60, 140, 0.40);
+  border-color: rgba(100, 160, 255, 0.55);
+}
+.kpi-template-chip.selected {
+  background: rgba(40, 80, 200, 0.40);
+  border-color: #6fa8ff;
+  color: #c8e0ff;
+  box-shadow: 0 0 0 1px rgba(111, 168, 255, 0.25);
+}
+
+/* ── KPI Search Input ── */
+.kpi-search-input-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.kpi-search-input {
+  flex: 1;
+  background: rgba(10, 20, 40, 0.70);
+  border: 1px solid rgba(80, 120, 200, 0.35);
+  border-radius: 8px;
+  color: #d5e3fb;
+  font-size: 0.82rem;
+  padding: 8px 12px;
+  outline: none;
+  font-family: inherit;
+}
+.kpi-search-input:focus { border-color: rgba(111, 158, 242, 0.70); }
+.kpi-search-input::placeholder { color: #3a5070; }
+
+.kpi-search-btn {
+  padding: 8px 18px;
+  border-radius: 8px;
+  border: 1px solid rgba(100, 160, 255, 0.45);
+  background: rgba(30, 70, 180, 0.30);
+  color: #90beff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.kpi-search-btn:hover:not(:disabled) { background: rgba(40, 90, 210, 0.45); }
+.kpi-search-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.kpi-active-template {
+  font-size: 0.74rem;
+  color: #5a7898;
+  margin-bottom: 12px;
+}
+.kpi-active-template span { color: #90beff; font-weight: 600; }
+
+.kpi-error {
+  padding: 8px 12px;
+  border-radius: 7px;
+  background: rgba(200, 50, 50, 0.12);
+  border: 1px solid rgba(200, 50, 50, 0.28);
+  color: #ff9090;
+  font-size: 0.78rem;
+  margin-bottom: 10px;
+}
+
+/* ── KPI Results ── */
+.kpi-results-section {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.kpi-results-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.kpi-results-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #edf3ff;
+}
+
+.kpi-results-query {
+  font-size: 0.80rem;
+  color: #6fa8ff;
+  font-weight: 600;
+}
+
+.kpi-results-time {
+  font-size: 0.68rem;
+  color: #3a5070;
+  margin-left: auto;
+}
+
+/* Table */
+.kpi-results-table {
+  border: 1px solid rgba(60, 90, 160, 0.20);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.kpi-results-table-head {
+  display: grid;
+  grid-template-columns: 1fr 120px 180px 100px;
+  padding: 8px 14px;
+  background: rgba(20, 35, 70, 0.70);
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #5a7090;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  gap: 12px;
+}
+
+.kpi-results-row {
+  display: grid;
+  grid-template-columns: 1fr 120px 180px 100px;
+  padding: 10px 14px;
+  border-top: 1px solid rgba(50, 75, 140, 0.15);
+  align-items: center;
+  gap: 12px;
+  transition: background 0.12s;
+}
+.kpi-results-row:hover { background: rgba(255, 255, 255, 0.02); }
+.kpi-row-top { background: rgba(40, 160, 100, 0.08); }
+.kpi-row-top:hover { background: rgba(40, 160, 100, 0.12); }
+.kpi-row-bottom { background: rgba(180, 60, 60, 0.06); }
+.kpi-row-bottom:hover { background: rgba(180, 60, 60, 0.10); }
+
+.kpi-pr-name {
+  font-size: 0.83rem;
+  font-weight: 600;
+  color: #c8d8f0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.kpi-badge-best {
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(40, 180, 110, 0.25);
+  border: 1px solid rgba(40, 180, 110, 0.40);
+  color: #60e0a0;
+}
+
+.kpi-badge-warn {
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(200, 80, 80, 0.20);
+  border: 1px solid rgba(200, 80, 80, 0.35);
+  color: #ff9090;
+}
+
+.kpi-match-count {
+  font-size: 0.80rem;
+  color: #8090b0;
+  font-family: monospace;
+  text-align: center;
+}
+
+.kpi-achievement {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kpi-achievement-bar-wrap {
+  flex: 1;
+  height: 6px;
+  background: rgba(40, 60, 110, 0.50);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.kpi-achievement-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3a80e0, #60b0ff);
+  border-radius: 3px;
+  transition: width 0.4s ease;
+  display: block;
+}
+
+.kpi-achievement-pct {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #90beff;
+  width: 38px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.kpi-top-score {
+  font-size: 0.78rem;
+  color: #6080a0;
+  font-family: monospace;
+  text-align: right;
+}
+
+/* Sample interactions */
+.kpi-samples-section {
+  padding: 12px 14px;
+  background: rgba(10, 18, 38, 0.50);
+  border: 1px solid rgba(50, 80, 140, 0.18);
+  border-radius: 8px;
+}
+
+.kpi-samples-title {
+  font-size: 0.70rem;
+  font-weight: 700;
+  color: #5070a0;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-bottom: 8px;
+}
+
+.kpi-samples-pr {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.kpi-samples-pr-name {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: #8090b0;
+  width: 80px;
+  flex-shrink: 0;
+}
+
+.kpi-samples-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.kpi-sample-item {
+  font-size: 0.68rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(30, 55, 110, 0.35);
+  border: 1px solid rgba(60, 100, 180, 0.22);
+  color: #7090c0;
+}
+
+/* AI Management Insight */
+.kpi-insight-panel {
+  padding: 14px 16px;
+  background: rgba(15, 25, 50, 0.65);
+  border: 1px solid rgba(100, 160, 255, 0.22);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.kpi-insight-title {
+  font-size: 0.70rem;
+  font-weight: 700;
+  color: #6fa8ff;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.kpi-insight-text {
+  font-size: 0.83rem;
+  color: #c0d0e8;
+  line-height: 1.6;
+}
+
+.kpi-action-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.kpi-action-list li {
+  font-size: 0.80rem;
+  color: #90a8c8;
+  line-height: 1.45;
+}

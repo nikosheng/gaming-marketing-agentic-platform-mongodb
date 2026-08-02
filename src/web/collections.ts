@@ -19,4 +19,6 @@ export const webCollections = {
   // Patron History Analysis
   patronInteractions: "patron_interaction_history",
   patronAnalysisReports: "patron_analysis_reports",
+  // PR Efficiency
+  prKpiSearches: "pr_kpi_searches",
 };

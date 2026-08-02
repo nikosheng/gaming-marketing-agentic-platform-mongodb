@@ -9,7 +9,10 @@
     "start": "next start",
     "seed": "tsx src/seed/seed.ts",
     "seed:dry": "tsx src/seed/seed.ts --dry-run",
+    "seed:interactions": "tsx src/seed/seed-interactions.ts",
+    "seed:interactions:dry": "tsx src/seed/seed-interactions.ts --dry-run",
     "backfill": "tsx src/scripts/backfill-embeddings.ts",
+    "backfill:interactions": "tsx src/scripts/backfill-interaction-embeddings.ts",
     "migrate:activities": "tsx src/scripts/migrate-activities-to-patrons.ts",
     "check": "tsc --noEmit",
     "stop": "kill-port 3000"

@@ -1,45 +1,7 @@
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { Db } from "mongodb";
 import { webCollections } from "./collections";
-import { config } from "../config";
-
-async function generateEmbedding(text: string): Promise<number[]> {
-  const apiKey = config.voyageApiKey;
-  if (!apiKey) {
-    console.warn("VOYAGE_API_KEY is missing, falling back to zero embedding");
-    return Array.from({ length: config.vectorEmbeddingDim ?? 1024 }, () => 0);
-  }
-
-  try {
-    const response = await fetch("https://api.voyageai.com/v1/embeddings", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        input: [text],
-        model: "voyage-4", // Latest high-perf model
-        input_type: "document",
-      }),
-    });
-
-    if (!response.ok) {
-      const errBody = await response.text();
-      throw new Error(`Voyage AI API error (${response.status}): ${errBody}`);
-    }
-
-    const data = await response.json();
-    const embedding = data.data?.[0]?.embedding;
-    if (!embedding) {
-      throw new Error("Invalid response structure from Voyage AI");
-    }
-    return embedding;
-  } catch (err) {
-    console.error("Embedding generation failed:", err);
-    return Array.from({ length: config.vectorEmbeddingDim ?? 1024 }, () => 0);
-  }
-}
+import { generateEmbedding } from "./embedding";
 
 type ParsedCriteria = {
   tiers: string[];

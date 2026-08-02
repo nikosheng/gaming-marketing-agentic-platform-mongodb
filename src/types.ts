@@ -494,6 +494,7 @@ export interface PatronInteractionRecord {
   linkedAlertId?: string;
   patronTierAtTime?: PatronTier;
   patronAdtAtTime?: number;
+  interactionEmbedding?: number[]; // Voyage AI 1024-dim, for KPI vector search
 }
 
 // ---------- Patron Analysis Report ----------
@@ -507,6 +508,44 @@ export interface NextActionRecommendation {
   rationale: string;
   urgency: "Immediate" | "Within48h" | "ThisWeek";
   estimatedValue?: number;
+}
+
+// ---------- PR Efficiency ----------
+
+export interface PrMetrics {
+  prAgentId: string;
+  name: string;
+  active: boolean;
+  totalInteractions: number;
+  interactionsByType: Partial<Record<InteractionType, number>>;
+  totalValueHKD: number;
+  uniquePatrons: number;
+  tierDistribution: Partial<Record<PatronTier, number>>;
+  lastInteractionAt?: Date;
+}
+
+export interface PrKpiResult {
+  prAgentId: string;
+  prName: string;
+  topMatchScore: number;       // highest cosine similarity found (0–1)
+  matchedCount: number;        // records with score >= 0.70
+  totalInteractions: number;
+  kpiAchievementRate: number;  // matchedCount / totalInteractions (0–1)
+  matchedSamples: Array<{
+    type: string;
+    occurredAt: string;
+    score: number;
+  }>;
+}
+
+export interface KpiSearchResult {
+  kpiText: string;
+  results: PrKpiResult[];      // sorted by kpiAchievementRate desc
+  topPerformer?: string;       // prAgentId
+  bottomPerformer?: string;    // prAgentId
+  insight: string;             // LLM Chinese management insight
+  actions: string[];           // LLM concrete action items
+  searchedAt: Date;
 }
 
 export interface PatronAnalysisReport {

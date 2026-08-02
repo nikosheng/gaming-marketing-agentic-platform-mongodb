@@ -292,7 +292,50 @@ type SimulateResponse = {
   error?: string;
 };
 
-type ConsoleSection = "patron-eyes" | "offer-catalog" | "patron-insight" | "alert-dashboard";
+type ConsoleSection = "patron-eyes" | "offer-catalog" | "patron-insight" | "alert-dashboard" | "pr-efficiency";
+
+// ---------- PR Efficiency types ----------
+
+type PrMetrics = {
+  prAgentId: string;
+  name: string;
+  active: boolean;
+  totalInteractions: number;
+  interactionsByType: Record<string, number>;
+  totalValueHKD: number;
+  uniquePatrons: number;
+  tierDistribution: Record<string, number>;
+  lastInteractionAt?: string;
+};
+
+type PrKpiResult = {
+  prAgentId: string;
+  prName: string;
+  topMatchScore: number;
+  matchedCount: number;
+  totalInteractions: number;
+  kpiAchievementRate: number;
+  matchedSamples: Array<{ type: string; occurredAt: string; score: number }>;
+};
+
+type KpiSearchResult = {
+  kpiText: string;
+  results: PrKpiResult[];
+  topPerformer?: string;
+  bottomPerformer?: string;
+  insight: string;
+  actions: string[];
+  searchedAt: string;
+};
+
+const KPI_TEMPLATES = [
+  { id: "room",     label: "高Tier賭客房間安排",  text: "為 Platinum 或 Diamond 等級賭客安排免費房間住宿" },
+  { id: "outreach", label: "電話/主動聯繫",        text: "主動致電或親身接觸賭客，確認回訪意願或維繫關係" },
+  { id: "rebate",   label: "籌碼/現金回贈",        text: "為高額下注賭客安排現金或籌碼回贈優惠" },
+  { id: "event",    label: "VIP活動邀請",           text: "邀請賭客參加 VIP 晚宴或專屬活動" },
+  { id: "transfer", label: "機場/酒店接送",         text: "安排豪華車輛為賭客提供機場或酒店接送服務" },
+  { id: "fnb",      label: "餐飲優惠安排",          text: "為賭客安排餐廳用餐或食品飲料優惠" },
+] as const;
 
 // ---------- Alert Dashboard types ----------
 
@@ -479,6 +522,16 @@ function SectionIcon({ section }: { section: ConsoleSection }) {
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path
           d="M12 2a7 7 0 0 0-7 7c0 2.4.9 4.5 2.3 6.1L6 18h12l-1.3-2.9A8.96 8.96 0 0 0 19 9a7 7 0 0 0-7-7zm0 18a2 2 0 0 1-2-2h4a2 2 0 0 1-2 2z"
+          fill="currentColor"
+        />
+      </svg>
+    );
+  }
+  if (section === "pr-efficiency") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          d="M9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4zM5 19h14a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1zm-3 2V6a3 3 0 0 1 3-3h14a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z"
           fill="currentColor"
         />
       </svg>
@@ -776,6 +829,14 @@ export default function DashboardClient() {
   const [interactionFormAlertId, setInteractionFormAlertId] = useState<string | null>(null);
   const [interactionForm, setInteractionForm] = useState<InteractionFormState>(DEFAULT_INTERACTION_FORM);
   const [interactionSubmitting, setInteractionSubmitting] = useState<boolean>(false);
+  // ---------- PR Efficiency state ----------
+  const [prMetrics, setPrMetrics] = useState<PrMetrics[]>([]);
+  const [prMetricsLoading, setPrMetricsLoading] = useState<boolean>(false);
+  const [kpiSelectedTemplate, setKpiSelectedTemplate] = useState<string>("");
+  const [kpiCustomText, setKpiCustomText] = useState<string>("");
+  const [kpiSearching, setKpiSearching] = useState<boolean>(false);
+  const [kpiResult, setKpiResult] = useState<KpiSearchResult | null>(null);
+  const [kpiError, setKpiError] = useState<string>("");
 
   useEffect(() => {
     async function fetchHeatmap() {
@@ -833,6 +894,19 @@ export default function DashboardClient() {
     }
     fetchAlertRules().catch(() => undefined);
     fetchAlerts().catch(() => undefined);
+  }, [activeSection]);
+
+  // Fetch PR metrics when pr-efficiency section is activated
+  useEffect(() => {
+    if (activeSection !== "pr-efficiency") return;
+    setPrMetricsLoading(true);
+    fetch("/api/pr-efficiency/metrics", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((data: { ok: boolean; metrics?: PrMetrics[] }) => {
+        if (data.ok) setPrMetrics(data.metrics ?? []);
+      })
+      .catch(() => undefined)
+      .finally(() => setPrMetricsLoading(false));
   }, [activeSection]);
 
   useEffect(() => {
@@ -1470,6 +1544,31 @@ export default function DashboardClient() {
     }
   }
 
+  async function handleKpiSearch() {
+    const kpiText = kpiCustomText.trim() || kpiSelectedTemplate;
+    if (!kpiText || kpiSearching) return;
+    setKpiSearching(true);
+    setKpiResult(null);
+    setKpiError("");
+    try {
+      const res = await fetch("/api/pr-efficiency/kpi-search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kpiText }),
+      });
+      const data = (await res.json()) as { ok: boolean; result?: KpiSearchResult; error?: string };
+      if (!data.ok) {
+        setKpiError(data.error ?? "搜尋失敗");
+        return;
+      }
+      if (data.result) setKpiResult(data.result);
+    } catch (err) {
+      setKpiError((err as Error).message);
+    } finally {
+      setKpiSearching(false);
+    }
+  }
+
   async function onSimulateRound() {
     if (!selectedTableId || simulateRoundLoading) return;
     setSimulateRoundLoading(true);
@@ -1636,6 +1735,16 @@ export default function DashboardClient() {
             </span>
           ) : null}
         </button>
+        <button
+          className={`console-nav-btn ${activeSection === "pr-efficiency" ? "active" : ""}`}
+          onClick={() => setActiveSection("pr-efficiency")}
+          type="button"
+        >
+          <span className="console-nav-icon">
+            <SectionIcon section="pr-efficiency" />
+          </span>
+          <span>PR Efficiency</span>
+        </button>
       </aside>
 
       <section className="console-content">
@@ -1646,14 +1755,18 @@ export default function DashboardClient() {
                 ? "Patron Eyes"
                 : activeSection === "alert-dashboard"
                   ? "Alert Dashboard"
-                  : "Offer Catalog"}
+                  : activeSection === "pr-efficiency"
+                    ? "PR Efficiency"
+                    : "Offer Catalog"}
             </h2>
             <p className="hero-subtitle">
               {activeSection === "patron-eyes"
                 ? "Monitor live table activity, drill into active patrons, and run instant loss-potential analysis."
                 : activeSection === "alert-dashboard"
                   ? "Define high-value patron rules in natural language. Simulate betting rounds and receive instant AI-powered alerts."
-                  : "Manage promotion inventory, run quick lookups, and generate strategy-ready offers with AI support."}
+                  : activeSection === "pr-efficiency"
+                    ? "Track PR interaction metrics and run KPI vector search to evaluate performance across all agents."
+                    : "Manage promotion inventory, run quick lookups, and generate strategy-ready offers with AI support."}
             </p>
           </div>
           <div className="hero-metrics">
@@ -3249,6 +3362,275 @@ export default function DashboardClient() {
             </article>
           </div>
         ) : null}
+
+        {/* ═══════════════════════════════════════
+            PR EFFICIENCY SECTION
+            ═══════════════════════════════════════ */}
+        {activeSection === "pr-efficiency" ? (
+          <div className="section-stack">
+
+            {/* ── PR Metrics Grid ── */}
+            <article className="panel-card">
+              <div className="pr-section-header">
+                <span className="pr-section-title">PR Metrics 總覽</span>
+                <button
+                  className="pr-refresh-btn"
+                  onClick={() => {
+                    setPrMetricsLoading(true);
+                    fetch("/api/pr-efficiency/metrics", { cache: "no-store" })
+                      .then((r) => r.json())
+                      .then((d: { ok: boolean; metrics?: PrMetrics[] }) => {
+                        if (d.ok) setPrMetrics(d.metrics ?? []);
+                      })
+                      .catch(() => undefined)
+                      .finally(() => setPrMetricsLoading(false));
+                  }}
+                  disabled={prMetricsLoading}
+                >
+                  {prMetricsLoading ? "載入中…" : "↻ 刷新"}
+                </button>
+              </div>
+
+              {prMetricsLoading ? (
+                <p className="small">載入 PR 統計數據…</p>
+              ) : prMetrics.length === 0 ? (
+                <div className="pr-empty-state">
+                  尚無 PR 互動記錄。請在 Alert Dashboard 的互動記錄表單中新增記錄。
+                </div>
+              ) : (
+                <div className="pr-metrics-grid">
+                  {prMetrics.map((pr) => (
+                    <div
+                      className={`pr-metric-card ${!pr.active ? "pr-metric-card-inactive" : ""}`}
+                      key={pr.prAgentId}
+                    >
+                      <div className="pr-metric-header">
+                        <div className="pr-metric-avatar">
+                          {pr.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="pr-metric-identity">
+                          <span className="pr-metric-name">{pr.name}</span>
+                          <span className="pr-metric-id">{pr.prAgentId}</span>
+                        </div>
+                        {!pr.active ? <span className="pr-inactive-badge">停用</span> : null}
+                      </div>
+
+                      <div className="pr-metric-stats-row">
+                        <div className="pr-metric-stat-item">
+                          <span className="pr-metric-stat-value">{pr.totalInteractions}</span>
+                          <span className="pr-metric-stat-label">互動總數</span>
+                        </div>
+                        <div className="pr-metric-stat-item">
+                          <span className="pr-metric-stat-value">{pr.uniquePatrons}</span>
+                          <span className="pr-metric-stat-label">服務賭客</span>
+                        </div>
+                        <div className="pr-metric-stat-item">
+                          <span className="pr-metric-stat-value pr-metric-value-gold">
+                            {pr.totalValueHKD > 0
+                              ? `${(pr.totalValueHKD / 1000).toFixed(0)}K`
+                              : "0"}
+                          </span>
+                          <span className="pr-metric-stat-label">優惠總值</span>
+                        </div>
+                      </div>
+
+                      {/* Interaction type breakdown */}
+                      {Object.keys(pr.interactionsByType).length > 0 ? (
+                        <div className="pr-type-breakdown">
+                          {Object.entries(pr.interactionsByType).map(([type, count]) => (
+                            <span className="pr-type-pill" key={type}>
+                              {type === "ROOM_COMP" ? "房" :
+                               type === "FB_COMP"   ? "餐" :
+                               type === "REBATE"    ? "贈" :
+                               type === "EVENT_INVITE" ? "活" :
+                               type === "OUTREACH"  ? "聯" :
+                               type === "TRANSFER"  ? "車" : type}
+                              {" "}{count}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {/* Tier distribution */}
+                      {Object.keys(pr.tierDistribution).length > 0 ? (
+                        <div className="pr-tier-row">
+                          {Object.entries(pr.tierDistribution).map(([tier, count]) => (
+                            <span className="pr-tier-chip" key={tier}>
+                              {tier} {count}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {pr.lastInteractionAt ? (
+                        <div className="pr-last-active">
+                          最後活動：{new Date(pr.lastInteractionAt).toLocaleDateString("zh-HK")}
+                        </div>
+                      ) : (
+                        <div className="pr-last-active pr-no-activity">尚無互動記錄</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </article>
+
+            {/* ── KPI Vector Search ── */}
+            <article className="panel-card">
+              <div className="pr-section-header">
+                <span className="pr-section-title">KPI 向量搜尋</span>
+              </div>
+              <p className="pr-section-desc">
+                選擇預設 KPI 模板，或輸入自定義描述，系統將透過語意向量搜尋分析所有 PR 的完成情況。
+              </p>
+
+              {/* Template chips */}
+              <div className="kpi-template-chips">
+                {KPI_TEMPLATES.map((tpl) => (
+                  <button
+                    key={tpl.id}
+                    className={`kpi-template-chip ${kpiSelectedTemplate === tpl.text ? "selected" : ""}`}
+                    onClick={() => {
+                      setKpiSelectedTemplate((prev) =>
+                        prev === tpl.text ? "" : tpl.text
+                      );
+                      setKpiCustomText("");
+                    }}
+                  >
+                    {tpl.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Custom text input */}
+              <div className="kpi-search-input-row">
+                <input
+                  className="kpi-search-input"
+                  type="text"
+                  placeholder="或輸入自定義 KPI 描述…"
+                  value={kpiCustomText}
+                  onChange={(e) => {
+                    setKpiCustomText(e.target.value);
+                    if (e.target.value) setKpiSelectedTemplate("");
+                  }}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleKpiSearch(); }}
+                />
+                <button
+                  className="kpi-search-btn"
+                  onClick={handleKpiSearch}
+                  disabled={kpiSearching || (!kpiSelectedTemplate && !kpiCustomText.trim())}
+                >
+                  {kpiSearching ? "分析中…" : "開始分析"}
+                </button>
+              </div>
+
+              {kpiSelectedTemplate ? (
+                <div className="kpi-active-template">
+                  已選 KPI：<span>{kpiSelectedTemplate}</span>
+                </div>
+              ) : null}
+
+              {kpiError ? (
+                <div className="kpi-error">{kpiError}</div>
+              ) : null}
+
+              {/* Search Results */}
+              {kpiResult ? (
+                <div className="kpi-results-section">
+                  <div className="kpi-results-header">
+                    <span className="kpi-results-title">搜尋結果</span>
+                    <span className="kpi-results-query">「{kpiResult.kpiText}」</span>
+                    <span className="kpi-results-time">
+                      {new Date(kpiResult.searchedAt).toLocaleString("zh-HK")}
+                    </span>
+                  </div>
+
+                  {/* Results table */}
+                  <div className="kpi-results-table">
+                    <div className="kpi-results-table-head">
+                      <span>公關人員</span>
+                      <span>匹配 / 總數</span>
+                      <span>KPI 達成率</span>
+                      <span>最高相似度</span>
+                    </div>
+                    {kpiResult.results.map((r) => {
+                      const isTop = r.prAgentId === kpiResult.topPerformer;
+                      const isBottom = r.prAgentId === kpiResult.bottomPerformer && r.totalInteractions > 0;
+                      return (
+                        <div
+                          className={`kpi-results-row ${isTop ? "kpi-row-top" : ""} ${isBottom ? "kpi-row-bottom" : ""}`}
+                          key={r.prAgentId}
+                        >
+                          <span className="kpi-pr-name">
+                            {r.prName}
+                            {isTop ? <span className="kpi-badge-best">最佳</span> : null}
+                            {isBottom ? <span className="kpi-badge-warn">需改善</span> : null}
+                          </span>
+                          <span className="kpi-match-count">
+                            {r.matchedCount} / {r.totalInteractions}
+                          </span>
+                          <span className="kpi-achievement">
+                            <span
+                              className="kpi-achievement-bar-wrap"
+                              title={`${(r.kpiAchievementRate * 100).toFixed(0)}%`}
+                            >
+                              <span
+                                className="kpi-achievement-bar-fill"
+                                style={{ width: `${Math.min(100, r.kpiAchievementRate * 100).toFixed(0)}%` }}
+                              />
+                            </span>
+                            <span className="kpi-achievement-pct">
+                              {(r.kpiAchievementRate * 100).toFixed(0)}%
+                            </span>
+                          </span>
+                          <span className="kpi-top-score">
+                            {r.topMatchScore > 0 ? r.topMatchScore.toFixed(3) : "—"}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Matched samples — show only if any PR has matches */}
+                  {kpiResult.results.some((r) => r.matchedSamples.length > 0) ? (
+                    <div className="kpi-samples-section">
+                      <div className="kpi-samples-title">高匹配互動樣本</div>
+                      {kpiResult.results
+                        .filter((r) => r.matchedSamples.length > 0)
+                        .map((r) => (
+                          <div className="kpi-samples-pr" key={`smp-${r.prAgentId}`}>
+                            <span className="kpi-samples-pr-name">{r.prName}</span>
+                            <div className="kpi-samples-list">
+                              {r.matchedSamples.map((s, si) => (
+                                <span className="kpi-sample-item" key={`smp-${r.prAgentId}-${si}`}>
+                                  {s.type} · {new Date(s.occurredAt).toLocaleDateString("zh-HK")} · {s.score.toFixed(3)}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  ) : null}
+
+                  {/* AI Management Insight */}
+                  <div className="kpi-insight-panel">
+                    <div className="kpi-insight-title">AI 管理建議</div>
+                    <div className="kpi-insight-text">{kpiResult.insight}</div>
+                    {kpiResult.actions.length > 0 ? (
+                      <ul className="kpi-action-list">
+                        {kpiResult.actions.map((action, ai) => (
+                          <li key={`action-${ai}`}>{action}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+            </article>
+
+          </div>
+        ) : null}
+
       </section>
       {riskCaseModalOpen ? (
         <div className="risk-modal-overlay" onClick={() => setRiskCaseModalOpen(false)} role="presentation">

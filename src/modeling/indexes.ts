@@ -25,6 +25,8 @@ export const collections = {
   // Patron History Analysis
   patronInteractions: "patron_interaction_history",
   patronAnalysisReports: "patron_analysis_reports",
+  // PR Efficiency
+  prKpiSearches: "pr_kpi_searches",
 };
 
 async function createVectorIndexIfNeeded(
@@ -206,6 +208,23 @@ export async function ensureIndexes(db: Db): Promise<void> {
     .createIndex({ recordedAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 7 });
 
   await db.collection(collections.tableRoundCounters).createIndex({ tableId: 1 }, { unique: true });
+
+  // ---------- PR Efficiency indexes ----------
+
+  await db
+    .collection(collections.prKpiSearches)
+    .createIndex({ searchId: 1 }, { unique: true });
+  await db
+    .collection(collections.prKpiSearches)
+    .createIndex({ searchedAt: -1 });
+
+  // Vector index for interaction records — enables KPI semantic search
+  await createVectorIndexIfNeeded(
+    db,
+    collections.patronInteractions,
+    "interaction_embedding_idx",
+    "interactionEmbedding"
+  );
 
   // ---------- Patron Interaction History indexes ----------
 

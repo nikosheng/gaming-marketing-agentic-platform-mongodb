@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getWebDb } from "../../../../../src/web/mongo";
 import { webCollections } from "../../../../../src/web/collections";
+import { generateEmbedding, buildInteractionEmbeddingText } from "../../../../../src/web/embedding";
 import type { PatronInteractionRecord, InteractionType } from "../../../../../src/types";
 
 type Params = { params: Promise<{ patronId: string }> };
@@ -86,6 +87,23 @@ export async function POST(req: NextRequest, { params }: Params) {
       patronTierAtTime: patron?.tier as PatronInteractionRecord["patronTierAtTime"],
       patronAdtAtTime: patron?.adt,
     };
+
+    // Generate semantic embedding for KPI vector search (non-blocking — failure safe)
+    try {
+      const embeddingText = buildInteractionEmbeddingText({
+        type: record.type,
+        totalValueHKD: record.totalValueHKD,
+        tier: record.patronTierAtTime,
+        detail: record.detail as Record<string, unknown>,
+        occurredAt: record.occurredAt,
+      });
+      const embedding = await generateEmbedding(embeddingText, "document");
+      if (embedding.some((v) => v !== 0)) {
+        record.interactionEmbedding = embedding;
+      }
+    } catch {
+      // embedding failure does not block record creation
+    }
 
     await db
       .collection(webCollections.patronInteractions)
