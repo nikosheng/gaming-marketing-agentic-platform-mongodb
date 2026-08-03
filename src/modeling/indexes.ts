@@ -95,6 +95,8 @@ async function dropLegacyParallelArrayIndexIfExists(db: Db): Promise<void> {
 export async function ensureIndexes(db: Db): Promise<void> {
   await db.collection(collections.patrons).createIndex({ patronId: 1 }, { unique: true });
   await db.collection(collections.patrons).createIndex({ tier: 1, adt: -1 });
+  await db.collection(collections.patrons).createIndex({ region: 1 });
+  await db.collection(collections.patrons).createIndex({ region: 1, tier: 1, adt: -1 });
   await db.collection(collections.patrons).createIndex({ lastActiveAt: -1 });
   await db.collection(collections.patrons).createIndex({ "activities.eventTime": -1 });
   await db.collection(collections.patrons).createIndex({

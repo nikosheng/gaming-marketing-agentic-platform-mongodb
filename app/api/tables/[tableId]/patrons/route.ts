@@ -32,6 +32,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
           tier: "$patron.tier",
           adt: "$patron.adt",
           pointsBalance: "$patron.pointsBalance",
+          region: "$patron.region",
           sessionBetAmount: 1,
           currentStackEstimate: 1,
           behaviorTags: 1,

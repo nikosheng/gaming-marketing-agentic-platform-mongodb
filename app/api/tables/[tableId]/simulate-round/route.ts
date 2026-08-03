@@ -39,6 +39,7 @@ const TEST_PATRON_PROFILES: Array<Omit<PatronProfile, "_id" | "activities" | "pr
     riskFlags: ["HighVariance"],
     pointsBalance: 45000,
     lastActiveAt: new Date(),
+    region: "HongKong",
   },
   {
     patronId: "TEST-S1-P2",
@@ -50,6 +51,7 @@ const TEST_PATRON_PROFILES: Array<Omit<PatronProfile, "_id" | "activities" | "pr
     riskFlags: ["None"],
     pointsBalance: 3000,
     lastActiveAt: new Date(),
+    region: "Macau",
   },
   {
     patronId: "TEST-S2-P1",
@@ -61,6 +63,7 @@ const TEST_PATRON_PROFILES: Array<Omit<PatronProfile, "_id" | "activities" | "pr
     riskFlags: ["None"],
     pointsBalance: 12000,
     lastActiveAt: new Date(),
+    region: "Guangdong",
   },
   {
     patronId: "TEST-S3-P1",
@@ -72,6 +75,7 @@ const TEST_PATRON_PROFILES: Array<Omit<PatronProfile, "_id" | "activities" | "pr
     riskFlags: ["HighVariance"],
     pointsBalance: 5000,
     lastActiveAt: new Date(),
+    region: "Guangdong",
   },
   {
     patronId: "TEST-S3-P2",
@@ -83,6 +87,7 @@ const TEST_PATRON_PROFILES: Array<Omit<PatronProfile, "_id" | "activities" | "pr
     riskFlags: ["None"],
     pointsBalance: 8000,
     lastActiveAt: new Date(),
+    region: "HongKong",
   },
 ];
 

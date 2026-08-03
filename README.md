@@ -4,6 +4,71 @@ A full-stack Management Console for casino marketing operations, built with Next
 
 ---
 
+## Overview
+
+The platform is designed around a single-page **Management Console** with five functional sections, each targeting a different operational role in a casino marketing team:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                      Management Console                             │
+├──────────────┬──────────────────────────────────────────────────────┤
+│              │                                                      │
+│  Sidebar     │  Content Area                                        │
+│              │                                                      │
+│  Patron Eyes │  ● Live heatmap of all tables                        │
+│              │  ● Click-to-drill: patrons, betting, AI scoring      │
+│  Offer       │  ● Min-bet optimizer + audit trail                   │
+│  Catalog     │  ● Simulate betting rounds → trigger alerts          │
+│              │  ● Risk workflow modal (LangGraph)                   │
+│  Patron      │                                                      │
+│  Insight     │  ● NL → LLM → alert rule creation                   │
+│              │  ● Alert feed with evidence + AI rationale           │
+│  Alert       │  ● Per-alert: record PR interaction (comp/room/etc)  │
+│  Dashboard   │  ● Per-alert: AI patron analysis + next-action reco  │
+│              │                                                      │
+│  PR          │  ● PR metrics grid (interactions, value, patrons)    │
+│  Efficiency  │  ● KPI vector search across all PR agents            │
+│              │  ● LLM management insight + ranked PR table          │
+└──────────────┴──────────────────────────────────────────────────────┘
+```
+
+**Core AI capabilities:**
+
+| Capability | Technology | Where Used |
+|---|---|---|
+| Natural language → condition rules | Azure OpenAI | Alert Dashboard rule creation |
+| Alert rationale generation | Azure OpenAI | Alert Feed cards |
+| Patron history analysis | Azure OpenAI | Alert Card "分析賭客" |
+| PR KPI management insight | Azure OpenAI | PR Efficiency KPI search |
+| Interaction semantic embedding | Voyage AI `voyage-4` | patron_interaction_history |
+| Patron preference embedding | Voyage AI `voyage-4` | patron_profiles |
+| Offer content embedding | Voyage AI `voyage-4` | offer_catalog |
+| KPI vector search | MongoDB Atlas Vector Search | PR Efficiency |
+| Offer–patron matching | MongoDB Atlas Vector Search | Offer Catalog |
+| Risk + AML workflow | LangGraph (LangChain) | Patron Insight |
+| Offer generation | LangGraph (LangChain) | Offer Catalog |
+
+**Data lifecycle for PR Efficiency:**
+
+```
+Public Relations Agent
+  └── records interaction in Alert Card or Patron Detail page
+       └── POST /api/patrons/:patronId/interactions
+            ├── saves to patron_interaction_history
+            └── Voyage AI → interactionEmbedding (1024-dim)
+
+Management
+  └── opens PR Efficiency tab
+       ├── views PR Metrics grid (aggregated from interaction_history)
+       └── runs KPI vector search
+            ├── Voyage AI → query embedding
+            ├── $vectorSearch → top-300 semantically similar records
+            ├── group by recordedBy → per-PR achievement rate
+            └── Azure OpenAI → ranked insight + action recommendations
+```
+
+---
+
 ## Table of Contents
 
 - [Features](#features)
@@ -123,13 +188,23 @@ cp .env.example .env.local
 ```bash
 npm install
 
-# Seed demo data (clear + reload all collections)
+# 1. Seed all base collections (patrons, tables, offers, PR agents, risk cases…)
+#    WARNING: destructive — clears and reloads all seeded collections
 npm run seed
 
-# Backfill Voyage embeddings for existing offers + patron profiles
-npm run backfill
+# 2. Seed simulated PR interaction records for PR Efficiency demo
+#    Additive — does NOT clear existing data
+#    Generates ~300–350 records across 24 PR agents with realistic type distribution
+npm run seed:interactions
 
-# Start development server
+# 3. Backfill Voyage AI embeddings
+#    (a) Offers + patron profiles — required for Offer Catalog vector matching
+npm run backfill
+#    (b) Interaction records — required for PR Efficiency KPI vector search
+#        ~341 records × 21s delay = ~2 hours (Voyage AI 3 RPM rate limit)
+npm run backfill:interactions
+
+# 4. Start development server
 npm run dev
 
 # Production build
@@ -292,6 +367,25 @@ Example embedding text generated for a ROOM_COMP record:
 
 If the Voyage API key is missing or the API call fails, the record is still saved without an embedding (graceful degradation).
 
+#### Demo Data Setup
+
+Run `npm run seed:interactions` to populate `patron_interaction_history` with ~300–350 simulated records. The script reads live PR agents and patrons from MongoDB — no hardcoded IDs.
+
+PR agents are split into 4 groups by sorted `prAgentId` order, each with a distinct interaction type distribution designed to produce meaningful differences in KPI vector search results:
+
+| Group | PRs (approx.) | Dominant types | KPI search profile |
+|---|---|---|---|
+| A — Hosting | First quarter | `ROOM_COMP` 40%, `TRANSFER` 30% | Scores high on room/accommodation KPIs |
+| B — Retention | Second quarter | `OUTREACH` 40%, `EVENT_INVITE` 30% | Scores high on contact/event KPIs |
+| C — Reward | Third quarter | `REBATE` 35%, `FB_COMP` 30% | Scores high on comp/rebate KPIs |
+| D — Generalist | Final quarter | All types ~17% each | Moderate score across all KPIs |
+
+Each PR receives 8–20 records scattered randomly across the past 180 days. Run `npm run seed:interactions:dry` to preview counts without writing.
+
+After seeding, run `npm run backfill:interactions` to generate embeddings. Until embeddings are filled, the KPI vector search will return empty results (the metrics grid is unaffected).
+
+> Full technical documentation: [docs/pr-efficiency.md](docs/pr-efficiency.md)
+
 ---
 
 ## API Reference
@@ -446,14 +540,17 @@ Management selects KPI template or types custom text
 ## Scripts
 
 ```bash
-npm run dev           # Next.js development server
-npm run build         # Production build
-npm run start         # Start production server
-npm run seed          # Seed all collections with demo data
-npm run seed:dry      # Preview seed counts without writing
-npm run backfill      # Backfill Voyage embeddings for offers + patron profiles
-npm run check         # TypeScript type check (tsc --noEmit)
-npm run stop          # Kill port 3000
+npm run dev                    # Next.js development server
+npm run build                  # Production build
+npm run start                  # Start production server
+npm run seed                   # Seed all collections with demo data (destructive)
+npm run seed:dry               # Preview seed counts without writing
+npm run seed:interactions      # Seed ~300 simulated PR interaction records (additive)
+npm run seed:interactions:dry  # Preview interaction seed counts without writing
+npm run backfill               # Backfill Voyage embeddings for offers + patron profiles
+npm run backfill:interactions  # Backfill interactionEmbedding for interaction records
+npm run check                  # TypeScript type check (tsc --noEmit)
+npm run stop                   # Kill port 3000
 ```
 
 ---
@@ -461,6 +558,7 @@ npm run stop          # Kill port 3000
 ## Additional Documentation
 
 - [docs/data-model.md](docs/data-model.md) — full MongoDB schema reference
+- [docs/pr-efficiency.md](docs/pr-efficiency.md) — PR Efficiency complete technical design
 - [docs/alert-dashboard-design.md](docs/alert-dashboard-design.md) — alert rule catalog and MQL executor design
 - [docs/minbet-optimizer-logic.md](docs/minbet-optimizer-logic.md) — min-bet recommendation algorithm
 - [docs/risk-review-agent-guide.md](docs/risk-review-agent-guide.md) — LangGraph risk workflow walkthrough

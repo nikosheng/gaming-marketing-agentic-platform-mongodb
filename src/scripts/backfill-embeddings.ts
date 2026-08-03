@@ -5,7 +5,7 @@ import { webCollections } from "../web/collections.js";
 
 dotenv.config();
 
-const VOYAGE_API_URL = "https://api.voyageai.com/v1/embeddings";
+const VOYAGE_API_URL = "https://ai.mongodb.com/v1/embeddings";
 const MODEL = "voyage-4";
 const BATCH_SIZE = 50;
 
@@ -58,15 +58,24 @@ async function backfillOffers(db: any) {
   for (let i = 0; i < offers.length; i += BATCH_SIZE) {
     if (i > 0) await sleep(21000); // 3 RPM limit
     const batch = offers.slice(i, i + BATCH_SIZE);
+    const offerTypeZh: Record<string, string> = {
+      HotelRoom: "酒店禮遇",
+      MusicShowTicket: "娛樂票券",
+      PointsLimitedTime: "限時積分兌換",
+      FNBVoucher: "餐飲禮券",
+      CashRebate: "現金回扣",
+      TransportVoucher: "專車接送禮券",
+    };
     const texts = batch.map((o: any) => {
-      const games = (o.targetGameTypes as string[] ?? []).join(", ") || "all games";
-      const rules = (o.eligibilityRules as string[] ?? []).join("; ") || "none";
+      const games = (o.targetGameTypes as string[] ?? []).join("、") || "所有遊戲";
+      const rules = (o.eligibilityRules as string[] ?? []).join("；") || "無特定條件";
+      const typeZh = offerTypeZh[o.offerType as string] ?? o.offerType;
       return (
-        `Offer type: ${o.offerType}. ` +
-        `Title: ${o.title}. ` +
-        `Description: ${o.description} ` +
-        `Target games: ${games}. ` +
-        `Eligibility: ${rules}.`
+        `${o.title}。` +
+        `${o.description} ` +
+        `優惠類型：${typeZh}。` +
+        `目標遊戲：${games}。` +
+        `適用條件：${rules}。`
       );
     });
     
@@ -157,18 +166,28 @@ async function backfillPatrons(db: any) {
     await sleep(21000);
     const batch = patrons.slice(i, i + BATCH_SIZE);
 
-    // Build a rich preference text that covers tier, games, ADT, points, risk flags and behavior
+    const regionZh: Record<string, string> = {
+      Macau: "澳門本地",
+      HongKong: "香港",
+      Guangdong: "廣東省",
+      OtherGBA: "大灣區",
+      Taiwan: "台灣",
+      International: "海外國際",
+    };
+    // Build a rich preference text that covers tier, games, ADT, points, risk flags, region and behavior
     const texts = batch.map((p: any) => {
       const games = (p.preferredGames as string[] ?? []).join(", ") || "unknown";
       const riskFlags = (p.riskFlags as string[] ?? []).filter((f: string) => f !== "None").join(", ") || "none";
       const behaviorTags = (sessionMap.get(p.patronId) ?? []).join(", ") || "unknown";
+      const region = regionZh[p.region as string] ?? (p.region as string) ?? "不詳";
       return (
         `Patron tier ${p.tier}, ` +
         `ADT ${p.adt}, ` +
         `prefers games: ${games}, ` +
         `points balance ${p.pointsBalance ?? 0}, ` +
         `risk flags: ${riskFlags}, ` +
-        `behavior: ${behaviorTags}`
+        `behavior: ${behaviorTags}, ` +
+        `region: ${region}`
       );
     });
 

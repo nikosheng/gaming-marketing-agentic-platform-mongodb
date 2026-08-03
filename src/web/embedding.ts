@@ -1,5 +1,8 @@
 import { config } from "../config";
 
+/** Atlas-hosted Voyage AI endpoint (uses Atlas API key with al- prefix) */
+const VOYAGE_ENDPOINT = "https://ai.mongodb.com/v1/embeddings";
+
 /**
  * generateEmbedding — shared Voyage AI embedding function.
  *
@@ -23,7 +26,7 @@ export async function generateEmbedding(
   }
 
   try {
-    const res = await fetch("https://api.voyageai.com/v1/embeddings", {
+    const res = await fetch(VOYAGE_ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -51,6 +54,71 @@ export async function generateEmbedding(
     return embedding;
   } catch (err) {
     console.error("[embedding] generation failed:", err);
+    return fallback;
+  }
+}
+
+/**
+ * generateEmbeddingBatch — generates embeddings for multiple texts in a single
+ * Voyage AI API call (up to 128 inputs per request).
+ *
+ * Returns an array of 1024-dim vectors in the same order as the input texts.
+ * Falls back to zero-vectors for the entire batch on API failure.
+ */
+export async function generateEmbeddingBatch(
+  texts: string[],
+  inputType: "document" | "query" = "document"
+): Promise<number[][]> {
+  const apiKey = config.voyageApiKey;
+  const dim = config.vectorEmbeddingDim ?? 1024;
+  const fallback = texts.map(() => Array.from({ length: dim }, () => 0));
+
+  if (!apiKey) {
+    console.warn("[embedding] VOYAGE_API_KEY missing — returning zero vectors");
+    return fallback;
+  }
+
+  if (texts.length === 0) return [];
+
+  try {
+    const res = await fetch(VOYAGE_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        input: texts,
+        model: "voyage-4",
+        input_type: inputType,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Voyage AI error (${res.status}): ${body}`);
+    }
+
+    const data = (await res.json()) as {
+      data?: Array<{ index: number; embedding?: number[] }>;
+    };
+
+    if (!data.data || data.data.length === 0) {
+      throw new Error("Voyage AI returned empty batch response");
+    }
+
+    // Reconstruct in original order using the index field
+    const result: number[][] = Array.from({ length: texts.length }, () =>
+      Array.from({ length: dim }, () => 0)
+    );
+    for (const item of data.data) {
+      if (item.embedding && item.embedding.length > 0) {
+        result[item.index] = item.embedding;
+      }
+    }
+    return result;
+  } catch (err) {
+    console.error("[embedding] batch generation failed:", err);
     return fallback;
   }
 }

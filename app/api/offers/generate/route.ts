@@ -40,6 +40,7 @@ type PatronContext = {
   adt?: number;
   preferredGames?: string[];
   pointsBalance?: number;
+  region?: string;
 };
 
 type OfferContext = {
@@ -54,65 +55,98 @@ function computeRuleScore(
 ): { rulePart: number; signals: string[] } {
   const signals: string[] = [];
   const tier = (patron.tier ?? "Bronze").toString();
+  const adt = patron.adt ?? 0;
+  const points = patron.pointsBalance ?? 0;
   const preferredGames = patron.preferredGames ?? [];
   const targets = offer.targetGameTypes ?? [];
+  const offerType = offer.offerType ?? "";
 
-  // game_overlap: 0 or 1 based on intersection
+  // ── game_overlap (weight 0.35) ─────────────────────────────────────────────
   let gameOverlap = 0;
   const overlap = targets.filter((g) => preferredGames.includes(g));
   if (overlap.length > 0) {
     gameOverlap = 1;
-    signals.push(`game-fit:${overlap[0]}`);
+    signals.push(`遊戲:${overlap[0]}`);
   }
 
-  // tier_eligibility: 0..1 depending on offer type and patron tier
+  // ── tier_fit (weight 0.25) ─────────────────────────────────────────────────
+  const diamondPlatinum = ["Diamond", "Platinum"];
   const premiumTiers = ["Diamond", "Platinum", "Gold"];
-  let tierFit = 0.4; // small baseline for any tier
-  if (
-    (offer.offerType === "HotelRoom" || offer.offerType === "MusicShowTicket") &&
-    premiumTiers.includes(tier)
-  ) {
-    tierFit = 1;
-    signals.push(`tier-${tier.toLowerCase()}`);
-  } else if (
-    offer.offerType === "FNBVoucher" ||
-    offer.offerType === "PointsLimitedTime"
-  ) {
-    tierFit = premiumTiers.includes(tier) ? 1 : 0.7;
-    signals.push(`tier-${tier.toLowerCase()}`);
+  let tierFit = 0.3;
+
+  if (offerType === "CashRebate") {
+    // Cash rebate is Diamond-only
+    tierFit = tier === "Diamond" ? 1.0 : tier === "Platinum" ? 0.5 : 0.1;
+    if (tier === "Diamond") signals.push("等級:鑽石");
+  } else if (offerType === "TransportVoucher") {
+    tierFit = diamondPlatinum.includes(tier) ? 1.0 : tier === "Gold" ? 0.6 : 0.2;
+    if (diamondPlatinum.includes(tier)) signals.push(`等級:${tier === "Diamond" ? "鑽石" : "白金"}`);
+  } else if (offerType === "HotelRoom" || offerType === "MusicShowTicket") {
+    tierFit = tier === "Diamond" ? 1.0 : tier === "Platinum" ? 0.9 : tier === "Gold" ? 0.6 : 0.3;
+    if (premiumTiers.includes(tier)) signals.push(`等級:${tier === "Diamond" ? "鑽石" : tier === "Platinum" ? "白金" : "黃金"}`);
+  } else {
+    // FNBVoucher, PointsLimitedTime — broader audience
+    tierFit = premiumTiers.includes(tier) ? 1.0 : tier === "Silver" ? 0.75 : 0.5;
+    signals.push(`等級:${tier}`);
   }
 
-  // points_fit: relevant only for PointsLimitedTime offers
-  let pointsFit = 0.5;
-  if (offer.offerType === "PointsLimitedTime") {
-    if ((patron.pointsBalance ?? 0) >= 10000) {
-      pointsFit = 1;
-      signals.push("points-rich");
-    } else if ((patron.pointsBalance ?? 0) >= 3000) {
-      pointsFit = 0.5;
-    } else {
-      pointsFit = 0.2;
-    }
-  }
-
-  // adt_fit: relevant for HotelRoom and MusicShowTicket
+  // ── adt_fit (weight 0.20) ──────────────────────────────────────────────────
   let adtFit = 0.5;
-  if (offer.offerType === "HotelRoom" || offer.offerType === "MusicShowTicket") {
-    if ((patron.adt ?? 0) >= 8000) {
-      adtFit = 1;
-      signals.push("high-adt");
-    } else if ((patron.adt ?? 0) >= 3000) {
-      adtFit = 0.5;
-    } else {
-      adtFit = 0.2;
+  if (offerType === "CashRebate") {
+    adtFit = adt >= 20000 ? 1.0 : adt >= 10000 ? 0.6 : adt >= 5000 ? 0.3 : 0.1;
+    if (adt >= 20000) signals.push("ADT>=20k");
+    else if (adt >= 10000) signals.push("ADT>=10k");
+  } else if (offerType === "HotelRoom") {
+    adtFit = adt >= 15000 ? 1.0 : adt >= 8000 ? 0.7 : adt >= 3000 ? 0.4 : 0.15;
+    if (adt >= 8000) signals.push("ADT>=8k");
+  } else if (offerType === "MusicShowTicket") {
+    adtFit = adt >= 10000 ? 1.0 : adt >= 5000 ? 0.7 : adt >= 2000 ? 0.4 : 0.2;
+    if (adt >= 5000) signals.push("ADT>=5k");
+  } else if (offerType === "TransportVoucher") {
+    adtFit = adt >= 8000 ? 1.0 : adt >= 4000 ? 0.6 : 0.25;
+    if (adt >= 8000) signals.push("ADT>=8k");
+  }
+  // FNBVoucher and PointsLimitedTime: ADT neutral (0.5)
+
+  // ── points_fit (weight 0.15) ───────────────────────────────────────────────
+  let pointsFit = 0.5;
+  if (offerType === "PointsLimitedTime") {
+    pointsFit = points >= 20000 ? 1.0 : points >= 10000 ? 0.75 : points >= 5000 ? 0.5 : points >= 500 ? 0.3 : 0.1;
+    if (points >= 10000) signals.push("積分豐富");
+    else if (points >= 5000) signals.push("積分>=5k");
+  } else if (offerType === "MusicShowTicket") {
+    pointsFit = points >= 5000 ? 0.8 : points >= 1000 ? 0.5 : 0.3;
+  }
+  // Other types: points neutral (0.5)
+
+  // ── region_fit (weight 0.05) ───────────────────────────────────────────────
+  // TransportVoucher is specifically designed for GBA patrons who need transport;
+  // International patrons score slightly lower (they typically use hotel shuttle).
+  const region = patron.region ?? "";
+  const gbaRegions = ["HongKong", "Guangdong", "OtherGBA", "Macau"];
+  let regionFit = 0.5;
+  if (offerType === "TransportVoucher") {
+    regionFit = gbaRegions.includes(region) ? 1.0 : region === "Taiwan" ? 0.6 : 0.3;
+    if (gbaRegions.includes(region)) {
+      const regionLabel: Record<string, string> = {
+        HongKong: "香港", Guangdong: "廣東", OtherGBA: "大灣區", Macau: "澳門",
+      };
+      signals.push(`地區:${regionLabel[region] ?? region}`);
     }
+  } else if (region) {
+    // For other offer types surface region as info signal only (no score impact)
+    const regionLabel: Record<string, string> = {
+      HongKong: "香港", Guangdong: "廣東", OtherGBA: "大灣區",
+      Macau: "澳門", Taiwan: "台灣", International: "國際",
+    };
+    if (regionLabel[region]) signals.push(`地區:${regionLabel[region]}`);
   }
 
   const rulePart = clamp01(
-    0.4 * gameOverlap + 0.3 * tierFit + 0.2 * pointsFit + 0.1 * adtFit
+    0.35 * gameOverlap + 0.25 * tierFit + 0.20 * adtFit + 0.15 * pointsFit + 0.05 * regionFit
   );
 
-  return { rulePart, signals: Array.from(new Set(signals)).slice(0, 3) };
+  return { rulePart, signals: Array.from(new Set(signals)).slice(0, 4) };
 }
 
 function buildReason(
@@ -121,16 +155,16 @@ function buildReason(
   rulePart: number,
   signals: string[]
 ): string {
-  const vec = `vector similarity ${(vectorPart * 100).toFixed(0)}%`;
-  const rules = signals.length > 0 ? signals.slice(0, 2).join(" + ") : "limited rule fit";
+  const vec = `語義相似度 ${(vectorPart * 100).toFixed(0)}%`;
+  const rules = signals.length > 0 ? signals.slice(0, 3).join("、") : "規則匹配有限";
 
   if (strength === "Strong") {
-    return `Strong match — ${vec} reinforced by ${rules}.`;
+    return `高度匹配 — ${vec}，佐以 ${rules}。`;
   }
   if (strength === "Moderate") {
-    return `Moderate match — ${vec}; supporting signals: ${rules}.`;
+    return `中等匹配 — ${vec}；支持信號：${rules}。`;
   }
-  return `Weak match — best available (${vec}); rule contribution ${(rulePart * 100).toFixed(0)}%.`;
+  return `低度匹配 — 現有最佳選項（${vec}），規則貢獻 ${(rulePart * 100).toFixed(0)}%。`;
 }
 
 // ---------- Route ----------
@@ -249,6 +283,7 @@ export async function POST(request: NextRequest) {
       adt: patron.adt,
       preferredGames: patron.preferredGames,
       pointsBalance: patron.pointsBalance,
+      region: patron.region,
     };
 
     const reranked = candidates
@@ -290,6 +325,7 @@ export async function POST(request: NextRequest) {
         adt: patron.adt,
         preferredGames: patron.preferredGames ?? [],
         pointsBalance: patron.pointsBalance ?? 0,
+        region: patron.region ?? null,
         behaviorTags,
       },
       generatedOffers: reranked,

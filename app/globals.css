@@ -471,8 +471,31 @@ body {
 
 .patron-head {
   display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
   justify-content: space-between;
   margin-bottom: 5px;
+}
+
+.region-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  background: rgba(100, 180, 255, 0.12);
+  border: 1px solid rgba(100, 180, 255, 0.30);
+  color: #90c8ff;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.region-badge-lg {
+  font-size: 0.78rem;
+  padding: 3px 10px;
 }
 
 .split {
@@ -748,16 +771,41 @@ body {
   gap: 8px;
   margin-top: 10px;
   flex-wrap: wrap;
+  row-gap: 6px;
 }
 
 .suggestion-chip {
   border: 1px solid #32558e;
   background: #142846;
   color: #bdd5ff;
-  border-radius: 999px;
-  padding: 6px 10px;
+  border-radius: 10px;
+  padding: 6px 12px;
   font-size: 0.75rem;
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.suggestion-chip:hover {
+  border-color: #5b8dee;
+  background: #1a3360;
+}
+
+.suggestion-chip-label {
+  font-weight: 700;
+  color: #d6e8ff;
+  font-size: 0.78rem;
+  letter-spacing: 0.01em;
+}
+
+.suggestion-chip-desc {
+  font-size: 0.68rem;
+  color: #7a9ccf;
+  line-height: 1.3;
 }
 
 .chat-canvas {
@@ -1627,8 +1675,8 @@ body.drawer-open {
 
 .offer-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
 }
 
 .offer-card {
@@ -1767,6 +1815,18 @@ body.drawer-open {
   background: linear-gradient(135deg, rgba(155, 220, 170, 0.18), rgba(155, 220, 170, 0.06));
   border-color: rgba(155, 220, 170, 0.45);
   color: #d1f1d8;
+}
+
+.type-chip.type-cashrebate {
+  background: linear-gradient(135deg, rgba(255, 215, 100, 0.20), rgba(255, 215, 100, 0.06));
+  border-color: rgba(255, 215, 100, 0.55);
+  color: #ffe98a;
+}
+
+.type-chip.type-transportvoucher {
+  background: linear-gradient(135deg, rgba(100, 210, 255, 0.18), rgba(100, 210, 255, 0.06));
+  border-color: rgba(100, 210, 255, 0.45);
+  color: #b8eeff;
 }
 
 .priority-bar,

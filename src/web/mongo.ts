@@ -10,7 +10,7 @@ const dbName = process.env.MONGODB_DB ?? "casino_marketing_demo";
 const options = {
   serverApi: {
     version: ServerApiVersion.v1,
-    strict: true,
+    strict: false,
     deprecationErrors: true,
   },
 };

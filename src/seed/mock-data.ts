@@ -39,6 +39,26 @@ function buildTableId(index: number): string {
   return `T-${String(index + 1).padStart(4, "0")}`;
 }
 
+// Macau casino visitor region distribution (weighted)
+const REGION_WEIGHTS: Array<{ region: PatronProfile["region"]; weight: number }> = [
+  { region: "HongKong",      weight: 30 },
+  { region: "Guangdong",     weight: 28 },
+  { region: "Macau",         weight: 18 },
+  { region: "OtherGBA",      weight: 10 },
+  { region: "Taiwan",        weight: 8  },
+  { region: "International", weight: 6  },
+];
+
+function pickRegion(): PatronProfile["region"] {
+  const total = REGION_WEIGHTS.reduce((s, r) => s + r.weight, 0);
+  let rand = Math.random() * total;
+  for (const { region, weight } of REGION_WEIGHTS) {
+    rand -= weight;
+    if (rand <= 0) return region;
+  }
+  return "International";
+}
+
 export function generatePatrons(count: number): PatronProfile[] {
   const tiers: PatronProfile["tier"][] = ["Bronze", "Silver", "Gold", "Platinum", "Diamond"];
   return Array.from({ length: count }, (_, i) => {
@@ -57,6 +77,7 @@ export function generatePatrons(count: number): PatronProfile[] {
       ),
       pointsBalance: faker.number.int({ min: 200, max: 120000 }),
       lastActiveAt: faker.date.recent({ days: 7 }),
+      region: pickRegion(),
       activities: [],
       preferenceEmbedding: randomEmbedding(),
       createdAt: faker.date.past({ years: 2 }),
@@ -165,43 +186,222 @@ export function generateActivities(
 
 export function generateOfferCatalog(): OfferCatalog[] {
   const now = new Date();
-  const items: Array<{ title: string; offerType: OfferCatalog["offerType"]; description: string }> = [
+
+  type OfferTemplate = {
+    offerId: string;
+    offerType: OfferCatalog["offerType"];
+    title: string;
+    description: string;
+    eligibilityRules: string[];
+    estimatedCost: number;
+    targetGameTypes: TableGameType[];
+    priority: number;
+  };
+
+  const templates: OfferTemplate[] = [
+    // ── HotelRoom ──────────────────────────────────────────────────────────────
     {
-      title: "Premium Hotel Suite - 1 Night",
+      offerId: "OFFER-0001",
       offerType: "HotelRoom",
-      description: "Complimentary one-night stay in premium suite for high-value patrons.",
+      title: "頂級豪華套房免費一晚",
+      description:
+        "專為鑽石及白金等級頂級賓客設計，ADT 15,000 以上的高消費百家樂及撲克玩家可享受一晚頂級豪華套房住宿禮遇，含早餐及行政貴賓廳使用權。",
+      eligibilityRules: [
+        "tier in [Diamond, Platinum]",
+        "adt >= 15000",
+        "lastActiveAt within 30 days",
+        "riskFlags does not include ResponsibleGamingHold",
+      ],
+      estimatedCost: 3800,
+      targetGameTypes: ["Baccarat", "Poker"],
+      priority: 100,
     },
     {
-      title: "Music Show VIP Ticket Pair",
+      offerId: "OFFER-0002",
+      offerType: "HotelRoom",
+      title: "高級客房週末住宿禮遇",
+      description:
+        "適合黃金等級活躍賓客，ADT 5,000 至 15,000 之間，近 14 天內有到訪紀錄，可享週末兩天一夜高級客房住宿，含自助早餐。",
+      eligibilityRules: [
+        "tier in [Gold]",
+        "adt >= 5000",
+        "adt < 15000",
+        "lastActiveAt within 14 days",
+        "riskFlags does not include ResponsibleGamingHold",
+      ],
+      estimatedCost: 1200,
+      targetGameTypes: ["Baccarat", "Blackjack", "Roulette"],
+      priority: 85,
+    },
+    // ── MusicShowTicket ────────────────────────────────────────────────────────
+    {
+      offerId: "OFFER-0003",
       offerType: "MusicShowTicket",
-      description: "Two VIP tickets for partner entertainment events.",
+      title: "演唱會 VIP 包廂雙人票",
+      description:
+        "白金及鑽石等級頂級賓客專屬，偏好百家樂或撲克的高消費玩家可獲贈國際知名演唱會 VIP 包廂雙人門票，含駐場服務及精緻餐飲。",
+      eligibilityRules: [
+        "tier in [Platinum, Diamond]",
+        "preferredGames includes [Baccarat, Poker]",
+        "lastActiveAt within 30 days",
+        "riskFlags does not include ResponsibleGamingHold",
+      ],
+      estimatedCost: 2800,
+      targetGameTypes: ["Baccarat", "Poker"],
+      priority: 95,
     },
     {
-      title: "2x Limited-Time Point Redemption",
+      offerId: "OFFER-0004",
+      offerType: "MusicShowTicket",
+      title: "週末娛樂表演雙人門票",
+      description:
+        "白銀及黃金等級積分達 5,000 點以上的賓客，可兌換週末娛樂表演雙人普通票，涵蓋多種輪盤及骰寶玩家，提升到訪率及娛樂體驗。",
+      eligibilityRules: [
+        "tier in [Silver, Gold]",
+        "pointsBalance >= 5000",
+        "lastActiveAt within 21 days",
+      ],
+      estimatedCost: 800,
+      targetGameTypes: ["Roulette", "SicBo", "Blackjack"],
+      priority: 75,
+    },
+    // ── PointsLimitedTime ──────────────────────────────────────────────────────
+    {
+      offerId: "OFFER-0005",
       offerType: "PointsLimitedTime",
-      description: "Short-window 2x value for loyalty point redemption.",
+      title: "限時雙倍積分兌換禮遇（頂級版）",
+      description:
+        "鑽石及白金等級積分餘額 20,000 點以上的頂級賓客，限時 72 小時內可享雙倍積分兌換價值，適合百家樂及撲克高消費玩家加快獲取禮品。",
+      eligibilityRules: [
+        "tier in [Diamond, Platinum]",
+        "pointsBalance >= 20000",
+        "lastActiveAt within 14 days",
+      ],
+      estimatedCost: 1500,
+      targetGameTypes: ["Baccarat", "Poker"],
+      priority: 90,
     },
     {
-      title: "Lounge Beverage Voucher",
+      offerId: "OFFER-0006",
+      offerType: "PointsLimitedTime",
+      title: "積分快閃兌換活動",
+      description:
+        "黃金及白銀等級積分達 5,000 點、近 30 天內活躍的賓客，可在限定 48 小時內以 1.5 倍積分兌換各類禮品及餐飲，刺激回訪意欲。",
+      eligibilityRules: [
+        "tier in [Gold, Silver]",
+        "pointsBalance >= 5000",
+        "lastActiveAt within 30 days",
+      ],
+      estimatedCost: 600,
+      targetGameTypes: ["Baccarat", "Blackjack", "Roulette", "SicBo"],
+      priority: 70,
+    },
+    {
+      offerId: "OFFER-0007",
+      offerType: "PointsLimitedTime",
+      title: "新會員積分激活禮包",
+      description:
+        "青銅及白銀等級初次兌換積分的賓客，積分餘額達 500 點即可啟動首次兌換獎勵，獲贈額外 200 積分加成，鼓勵新賓客積極參與積分計劃。",
+      eligibilityRules: [
+        "tier in [Bronze, Silver]",
+        "pointsBalance >= 500",
+        "lastActiveAt within 60 days",
+      ],
+      estimatedCost: 150,
+      targetGameTypes: ["Baccarat", "Blackjack", "Roulette", "SicBo", "Poker"],
+      priority: 55,
+    },
+    // ── FNBVoucher ─────────────────────────────────────────────────────────────
+    {
+      offerId: "OFFER-0008",
       offerType: "FNBVoucher",
-      description: "Lounge drink package for active table patrons.",
+      title: "頂級餐廳晚宴禮品券",
+      description:
+        "白金及鑽石等級 ADT 10,000 以上的尊貴賓客，可獲贈指定頂級餐廳雙人晚宴禮品券，含酒水服務，提升高端賓客的整體體驗及忠誠度。",
+      eligibilityRules: [
+        "tier in [Platinum, Diamond]",
+        "adt >= 10000",
+        "lastActiveAt within 30 days",
+        "riskFlags does not include ResponsibleGamingHold",
+      ],
+      estimatedCost: 1800,
+      targetGameTypes: ["Baccarat", "Poker"],
+      priority: 88,
+    },
+    {
+      offerId: "OFFER-0009",
+      offerType: "FNBVoucher",
+      title: "貴賓廳飲品免費暢飲券",
+      description:
+        "所有等級賓客，當日桌面下注金額達 3,000 元以上即可獲贈貴賓廳飲品免費暢飲券，適用於所有遊戲類型，鼓勵賓客加大下注參與。",
+      eligibilityRules: [
+        "TableBet amount >= 3000",
+        "lastActiveAt within 7 days",
+      ],
+      estimatedCost: 300,
+      targetGameTypes: ["Baccarat", "Blackjack", "Roulette", "SicBo", "Poker"],
+      priority: 65,
+    },
+    {
+      offerId: "OFFER-0010",
+      offerType: "FNBVoucher",
+      title: "下午茶自助餐雙人券",
+      description:
+        "白銀及黃金等級近 7 天內有到訪紀錄的活躍賓客，可獲贈酒店下午茶自助餐雙人券，適合輪盤及骰寶愛好者，提升短期回訪頻率。",
+      eligibilityRules: [
+        "tier in [Silver, Gold]",
+        "lastActiveAt within 7 days",
+      ],
+      estimatedCost: 480,
+      targetGameTypes: ["Roulette", "SicBo", "Blackjack"],
+      priority: 60,
+    },
+    // ── CashRebate ─────────────────────────────────────────────────────────────
+    {
+      offerId: "OFFER-0011",
+      offerType: "CashRebate",
+      title: "頂級現金回扣禮遇",
+      description:
+        "鑽石等級 ADT 20,000 以上的最高端百家樂及撲克玩家，可享每月最高 3% 現金回扣禮遇，以現金或籌碼形式返還，為頂級賓客提供最具競爭力的留客方案。",
+      eligibilityRules: [
+        "tier in [Diamond]",
+        "adt >= 20000",
+        "preferredGames includes [Baccarat, Poker]",
+        "lastActiveAt within 30 days",
+        "riskFlags does not include ResponsibleGamingHold",
+      ],
+      estimatedCost: 5000,
+      targetGameTypes: ["Baccarat", "Poker"],
+      priority: 98,
+    },
+    // ── TransportVoucher ───────────────────────────────────────────────────────
+    {
+      offerId: "OFFER-0012",
+      offerType: "TransportVoucher",
+      title: "尊貴專車接送禮券",
+      description:
+        "白金及鑽石等級 ADT 8,000 以上的賓客，可享預約尊貴專車或直升機接送服務，覆蓋港澳及大灣區主要城市，提升頂級賓客的到訪便利性及尊貴感受。",
+      eligibilityRules: [
+        "tier in [Platinum, Diamond]",
+        "adt >= 8000",
+        "lastActiveAt within 45 days",
+      ],
+      estimatedCost: 2200,
+      targetGameTypes: ["Baccarat", "Poker", "Blackjack"],
+      priority: 82,
     },
   ];
 
-  return items.map((item, index) => ({
-    offerId: `OFFER-${String(index + 1).padStart(4, "0")}`,
-    offerType: item.offerType,
-    title: item.title,
-    description: item.description,
-    eligibilityRules: [
-      "adt >= 1000",
-      "lastActiveAt <= 7 days",
-      "riskFlags does not include ResponsibleGamingHold",
-    ],
-    estimatedCost: faker.number.int({ min: 80, max: 1500 }),
-    targetGameTypes: faker.helpers.arrayElements(gameTypes, { min: 1, max: 3 }),
-    priority: 100 - index * 10,
-    status: "Active",
+  return templates.map((t) => ({
+    offerId: t.offerId,
+    offerType: t.offerType,
+    title: t.title,
+    description: t.description,
+    eligibilityRules: t.eligibilityRules,
+    estimatedCost: t.estimatedCost,
+    targetGameTypes: t.targetGameTypes,
+    priority: t.priority,
+    status: "Active" as const,
     offerEmbedding: randomEmbedding(),
     createdAt: now,
     updatedAt: now,

@@ -10,7 +10,13 @@ export type ActivityType =
   | "ShowPurchase"
   | "HotelBooking"
   | "DrinkRedeem";
-export type OfferType = "HotelRoom" | "MusicShowTicket" | "PointsLimitedTime" | "FNBVoucher";
+export type OfferType =
+  | "HotelRoom"
+  | "MusicShowTicket"
+  | "PointsLimitedTime"
+  | "FNBVoucher"
+  | "CashRebate"
+  | "TransportVoucher";
 export type OfferStatus = "Proposed" | "Draft" | "Active" | "Expired" | "Rejected";
 export type OfferCreatedBy = "Manual" | "AIAgent";
 export type OfferApprovalDecision = "Approve" | "Reject";
@@ -30,6 +36,13 @@ export type AdminDecision = "Approve" | "Reject" | "RequestMoreInfo";
 export type EscalationTier = "Standard" | "Senior";
 export type CreditBand = "Weak" | "Fair" | "Good" | "Strong";
 export type SourceOfFundsRisk = "Low" | "Medium" | "High";
+export type PatronRegion =
+  | "Macau"
+  | "HongKong"
+  | "Guangdong"
+  | "OtherGBA"
+  | "Taiwan"
+  | "International";
 
 export interface PatronProfile {
   _id?: ObjectId;
@@ -42,6 +55,7 @@ export interface PatronProfile {
   riskFlags: string[];
   pointsBalance: number;
   lastActiveAt: Date;
+  region: PatronRegion;
   activities: PatronActivityEvent[];
   preferenceEmbedding: number[];
   createdAt: Date;

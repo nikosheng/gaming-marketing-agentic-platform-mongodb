@@ -330,7 +330,7 @@ ${prSummary}
           { role: "user", content: userPrompt },
         ],
         temperature: 0.4,
-        max_completion_tokens: 400,
+        max_completion_tokens: 10000,
         response_format: { type: "json_object" },
       }),
     });

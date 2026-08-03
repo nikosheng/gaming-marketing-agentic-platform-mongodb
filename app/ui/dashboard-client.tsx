@@ -35,6 +35,7 @@ type PatronRow = {
   currentStackEstimate: number;
   behaviorTags: string[];
   lastActionAt: string;
+  region?: string;
 };
 
 type PatronResponse = {
@@ -151,6 +152,7 @@ type GeneratedPatronSummary = {
   preferredGames?: string[];
   pointsBalance?: number;
   behaviorTags?: string[];
+  region?: string | null;
 } | null;
 
 type AgentMessage = {
@@ -481,10 +483,37 @@ type SimulateRoundResponse = {
   error?: string;
 };
 
-const promptTemplates = [
-  "Create a premium hotel offer for Platinum baccarat patrons with ADT >= 10000 active within 7 days.",
-  "Offer: Weekend Show Bundle. Build a show ticket offer for Diamond patrons with table bet activity in last 14 days.",
-  "Create a points limited-time offer for Gold and Platinum patrons with points >= 20000 and chip exchange >= 8000.",
+const promptTemplates: Array<{ label: string; desc: string; text: string }> = [
+  {
+    label: "豪華套房",
+    desc: "鑽石/白金 · 百家樂 · ADT ≥ 15k",
+    text: "為鑽石及白金等級的百家樂賓客創建頂級豪華套房優惠，要求 ADT >= 15,000，近 30 天內活躍。",
+  },
+  {
+    label: "現金回扣",
+    desc: "鑽石 · 百家樂/撲克 · ADT ≥ 20k",
+    text: "為偏好百家樂或撲克的鑽石賓客，ADT >= 20,000，創建高端現金回扣禮遇，回扣率 3%。",
+  },
+  {
+    label: "限時積分",
+    desc: "黃金/白金 · 積分 ≥ 20k · 14 天活躍",
+    text: "為黃金及白金等級積分 >= 20,000 的賓客，創建限時雙倍積分兌換活動，近 14 天內活躍。",
+  },
+  {
+    label: "專車接送",
+    desc: "白金/鑽石 · ADT ≥ 8k · 港澳大灣區",
+    text: "為白金及鑽石賓客，ADT >= 8,000，創建尊貴專車接送禮券，覆蓋港澳及大灣區城市。",
+  },
+  {
+    label: "演唱會票券",
+    desc: "白金/鑽石 · 百家樂/撲克 · VIP 包廂",
+    text: "為白金及鑽石等級偏好百家樂或撲克的賓客，創建演唱會 VIP 包廂雙人票優惠，近 30 天內活躍。",
+  },
+  {
+    label: "餐廳晚宴",
+    desc: "白金/鑽石 · ADT ≥ 10k · 頂級餐廳",
+    text: "為白金及鑽石等級 ADT >= 10,000 的尊貴賓客，創建頂級餐廳雙人晚宴禮品券，含酒水服務。",
+  },
 ];
 
 const metricHelpText = {
@@ -788,7 +817,7 @@ export default function DashboardClient() {
     {
       role: "assistant",
       content:
-        "Tell me the offer and patron criteria. Example: Create a hotel offer for Gold/Platinum baccarat patrons with ADT >= 5000 active within 7 days.",
+        "請告訴我優惠條件及目標賓客。例如：為鑽石等級百家樂賓客創建酒店套房優惠，ADT >= 10,000，近 14 天內活躍。",
     },
   ]);
   const [riskCaseLoading, setRiskCaseLoading] = useState<boolean>(false);
@@ -984,8 +1013,8 @@ export default function DashboardClient() {
 
   const filteredOffers = useMemo(() => {
     const all = offerDashboard?.offers ?? [];
-    if (offerStatusFilter === "All") return all.slice(0, 16);
-    return all.filter((o) => o.status === offerStatusFilter).slice(0, 16);
+    if (offerStatusFilter === "All") return all.slice(0, 24);
+    return all.filter((o) => o.status === offerStatusFilter).slice(0, 24);
   }, [offerDashboard, offerStatusFilter]);
 
   function onCopyPatronId(patronId: string) {
@@ -1067,6 +1096,31 @@ export default function DashboardClient() {
 
   function formatAmount(value: number) {
     return value.toLocaleString();
+  }
+
+  function offerTypeLabel(type: string): string {
+    const map: Record<string, string> = {
+      HotelRoom: "酒店禮遇",
+      MusicShowTicket: "娛樂票券",
+      PointsLimitedTime: "限時積分",
+      FNBVoucher: "餐飲禮券",
+      CashRebate: "現金回扣",
+      TransportVoucher: "專車接送",
+    };
+    return map[type] ?? type;
+  }
+
+  function regionLabel(region: string | null | undefined): string {
+    if (!region) return "";
+    const map: Record<string, string> = {
+      Macau:         "🇲🇴 澳門",
+      HongKong:      "🇭🇰 香港",
+      Guangdong:     "🇨🇳 廣東",
+      OtherGBA:      "🏙 大灣區",
+      Taiwan:        "🇹🇼 台灣",
+      International: "🌏 國際",
+    };
+    return map[region] ?? region;
   }
 
   async function onGenerateOffers() {
@@ -1921,6 +1975,9 @@ export default function DashboardClient() {
                   <div className="patron-head">
                     <strong>{patron.patronId}</strong>
                     <span className="small">{patron.tier}</span>
+                    {patron.region ? (
+                      <span className="region-badge">{regionLabel(patron.region)}</span>
+                    ) : null}
                   </div>
                   <div className="split small">
                     <span>Bet {formatAmount(patron.sessionBetAmount)}</span>
@@ -2335,7 +2392,7 @@ export default function DashboardClient() {
                           <div className="offer-tag-wrap">
                             {patron.suggestedOffers.map((offer) => (
                               <span className="offer-tag" key={`${patron.patronId}-${offer.offerId}`}>
-                                {offer.offerType} | {offer.title} ({(offer.score * 100).toFixed(1)}%)
+                                {offerTypeLabel(offer.offerType)} | {offer.title} ({(offer.score * 100).toFixed(1)}%)
                               </span>
                             ))}
                           </div>
@@ -2408,6 +2465,14 @@ export default function DashboardClient() {
                         </div>
                       </div>
                     ) : null}
+                    {generatedPatron.region ? (
+                      <div className="lookup-patron-row">
+                        <span className="lookup-patron-label">地區</span>
+                        <div className="lookup-patron-chips">
+                          <span className="region-badge region-badge-lg">{regionLabel(generatedPatron.region)}</span>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
                 {generatedOffers.length > 0 ? (
@@ -2425,7 +2490,7 @@ export default function DashboardClient() {
                       return (
                         <div className="generated-offer-card" key={`${item.offerId}-${item.title}`}>
                           <div className="offer-card-head">
-                            <span className={`type-chip ${typeClass}`}>{item.offerType}</span>
+                            <span className={`type-chip ${typeClass}`}>{offerTypeLabel(item.offerType)}</span>
                             <div className="score-wrap">
                               <strong className="score-value">{pct}%</strong>
                               {item.breakdown ? (
@@ -2507,9 +2572,9 @@ export default function DashboardClient() {
                           <span className={`status-pill status-${statusClass}`}>{offer.status}</span>
                         </div>
                         <div className="offer-card-chips">
-                          <span className={`type-chip ${typeClass}`}>{offer.offerType}</span>
-                          {isAi ? (
-                            <span className="offer-card-source" title="Created by AI Agent">
+                           <span className={`type-chip ${typeClass}`}>{offerTypeLabel(offer.offerType)}</span>
+                           {isAi ? (
+                             <span className="offer-card-source" title="Created by AI Agent">
                               <svg width="11" height="11" viewBox="0 0 24 24" aria-hidden="true">
                                 <path
                                   fill="currentColor"
@@ -2646,14 +2711,15 @@ export default function DashboardClient() {
               <div className="status-badge">{agentLoading ? "Processing..." : "LangGraph Online"}</div>
             </div>
             <div className="suggestion-row">
-              {promptTemplates.map((prompt) => (
+              {promptTemplates.map((tpl) => (
                 <button
-                  key={prompt}
+                  key={tpl.label}
                   className="suggestion-chip"
-                  onClick={() => setAgentInput(prompt)}
+                  onClick={() => setAgentInput(tpl.text)}
                   type="button"
                 >
-                  Use Template
+                  <span className="suggestion-chip-label">{tpl.label}</span>
+                  <span className="suggestion-chip-desc">{tpl.desc}</span>
                 </button>
               ))}
             </div>
