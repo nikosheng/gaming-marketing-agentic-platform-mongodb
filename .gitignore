@@ -16,6 +16,9 @@
 # misc
 .DS_Store
 *.pem
+docs/customer-data-requirements.md
+docs/Sands AI Data Set.csv
+docs/schema-reference.md
 
 # debug
 npm-debug.log*
@@ -25,6 +28,7 @@ yarn-error.log*
 # local env files
 .env*.local
 .env
+infra/.env
 
 # vercel
 .vercel

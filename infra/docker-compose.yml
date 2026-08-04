@@ -1,0 +1,118 @@
+# ------------------------------------------------------------------------------
+# LLM Gateway stack for macau-gaming-marketing-ai-project.
+#
+# Services:
+#   - litellm : OpenAI-compatible gateway, routes chat to Azure OpenAI and
+#               embeddings to the local TEI container.
+#   - tei     : HuggingFace Text-Embeddings-Inference server hosting
+#               voyageai/voyage-4-nano at 1024 dim (MRL truncation).
+#   - redis   : LiteLLM response cache + routing state.
+#
+# Target host : Debian 12 x86_64, CPU-only (Xeon/EPYC class).
+#
+# Usage:
+#   cp .env.example .env      # fill AZURE_OPENAI_* and LITELLM_MASTER_KEY
+#   docker compose up -d
+#   curl http://localhost:4000/health/liveliness
+# ------------------------------------------------------------------------------
+
+name: mgm-llm-gateway
+
+networks:
+  llm-net:
+    driver: bridge
+
+volumes:
+  tei-cache:
+  redis-data:
+
+services:
+  # ---------------------------------------------------------------------------
+  # LiteLLM Gateway
+  # ---------------------------------------------------------------------------
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: mgm-litellm
+    restart: unless-stopped
+    depends_on:
+      tei:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "4000:4000"
+    environment:
+      # Chat: Azure OpenAI (primary)
+      AZURE_OPENAI_ENDPOINT:    ${AZURE_OPENAI_ENDPOINT}
+      AZURE_OPENAI_API_KEY:     ${AZURE_OPENAI_API_KEY}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-12-01-preview}
+      # Chat: OpenAI fallback (unused unless the slot is uncommented in config.yaml)
+      OPENAI_API_KEY:           ${OPENAI_API_KEY:-}
+      # LiteLLM master key (clients must present this as Bearer token)
+      LITELLM_MASTER_KEY:       ${LITELLM_MASTER_KEY}
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness').status==200 else sys.exit(1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    networks:
+      - llm-net
+
+  # ---------------------------------------------------------------------------
+  # Text-Embeddings-Inference — voyage-4-nano (CPU)
+  #
+  # First launch downloads ~700MB of weights into the tei-cache volume.
+  # --default-truncate-dim 1024 keeps output aligned with existing Mongo Atlas
+  # Vector Search indexes (which were built at 1024 dim for voyage-4).
+  # ---------------------------------------------------------------------------
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    container_name: mgm-tei
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - tei-cache:/data
+    environment:
+      # HF token only needed for gated models; voyage-4-nano is public Apache-2.0.
+      HF_TOKEN: ${HF_TOKEN:-}
+    command:
+      - --model-id=voyageai/voyage-4-nano
+      - --pooling=mean
+      - --auto-truncate
+      - --default-truncate-dim=1024
+      - --trust-remote-code
+      - --max-batch-tokens=65536
+      - --max-concurrent-requests=128
+      - --hostname=0.0.0.0
+      - --port=80
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
+    networks:
+      - llm-net
+
+  # ---------------------------------------------------------------------------
+  # Redis — LiteLLM response cache
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: mgm-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - llm-net

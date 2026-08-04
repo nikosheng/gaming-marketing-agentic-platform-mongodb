@@ -3,6 +3,7 @@ import { Db } from "mongodb";
 import type { AlertRule, AlertRulePreview, ConditionType, ParsedCondition } from "../types";
 import { CONDITION_CATALOG, buildCatalogPromptSection, getCatalogByType } from "./condition-catalog";
 import { webCollections } from "./collections";
+import { chatJson, isGatewayConfigured } from "./llm/gateway";
 
 // ---------- Types ----------
 
@@ -35,47 +36,6 @@ const AlertRuleAgentState = Annotation.Root({
   ruleId: Annotation<string | null>,
   error: Annotation<string | null>,
 });
-
-// ---------- LLM call (Azure OpenAI fetch — same pattern as minbet-optimizer) ----------
-
-async function callAzureOpenAI(systemPrompt: string, userPrompt: string): Promise<string | null> {
-  const endpoint = process.env.AZURE_OPENAI_ENDPOINT;
-  const apiKey = process.env.AZURE_OPENAI_API_KEY;
-  const deployment = process.env.AZURE_OPENAI_DEPLOYMENT ?? "gpt-4o-mini";
-  const apiVersion = process.env.AZURE_OPENAI_API_VERSION ?? "2024-08-01-preview";
-
-  if (!endpoint || !apiKey) {
-    return null; // signals "not configured" to the caller
-  }
-
-  const url = `${endpoint.replace(/\/$/, "")}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`;
-
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "api-key": apiKey,
-      },
-      body: JSON.stringify({
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.1,
-        max_completion_tokens: 800,
-        response_format: { type: "json_object" },
-      }),
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    return data.choices?.[0]?.message?.content?.trim() ?? null;
-  } catch {
-    return null;
-  }
-}
 
 // ---------- System prompt ----------
 
@@ -120,20 +80,22 @@ Condition matching rules:
 // ---------- Nodes ----------
 
 async function parseIntentNode(state: typeof AlertRuleAgentState.State) {
-  const endpoint = process.env.AZURE_OPENAI_ENDPOINT;
-  const apiKey = process.env.AZURE_OPENAI_API_KEY;
-
-  if (!endpoint || !apiKey) {
+  if (!isGatewayConfigured()) {
     return {
       error:
-        "AI_NOT_CONFIGURED: 請配置 AZURE_OPENAI_ENDPOINT 和 AZURE_OPENAI_API_KEY 環境變量以使用 NL 規則解析功能。",
+        "AI_NOT_CONFIGURED: 請配置 LITELLM_BASE_URL 和 LITELLM_API_KEY 環境變量以使用 NL 規則解析功能。",
     };
   }
 
   const systemPrompt = buildSystemPrompt();
   const userPrompt = `用戶描述: "${state.nlDescription}"`;
 
-  const raw = await callAzureOpenAI(systemPrompt, userPrompt);
+  const raw = await chatJson({
+    system: systemPrompt,
+    user: userPrompt,
+    temperature: 0.1,
+    maxTokens: 800,
+  });
   if (!raw) {
     return {
       error: "LLM_CALL_FAILED: 無法調用 AI 服務，請稍後重試。",

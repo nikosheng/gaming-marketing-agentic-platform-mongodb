@@ -1,6 +1,7 @@
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { Db } from "mongodb";
 import { webCollections } from "./collections";
+import { chatText } from "./llm/gateway";
 
 // ---------- Types ----------
 
@@ -177,14 +178,6 @@ async function generateLlmRationale(
   dist: DistributionResult,
   decision: Decision
 ): Promise<string | null> {
-  const endpoint = process.env.AZURE_OPENAI_ENDPOINT;
-  const apiKey = process.env.AZURE_OPENAI_API_KEY;
-  const deployment = process.env.AZURE_OPENAI_DEPLOYMENT ?? "gpt-5.1-mini";
-  const apiVersion = process.env.AZURE_OPENAI_API_VERSION ?? "2024-08-01-preview";
-
-  if (!endpoint || !apiKey) return null;
-
-  const url = `${endpoint.replace(/\/$/, "")}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`;
   const userPrompt = `You are a casino floor analyst. Write a concise 2-3 sentence explanation for a proposed min-bet change.
 
 Table: ${table.tableName} (${table.gameType}, zone ${table.zone})
@@ -199,30 +192,12 @@ Reasons (bullets): ${decision.reasons.join("; ")}
 
 Explain the recommendation in plain business language. Do not invent numbers.`;
 
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "api-key": apiKey,
-      },
-      body: JSON.stringify({
-        messages: [
-          { role: "system", content: "You write concise casino operations analyst rationales." },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.3,
-        max_completion_tokens: 200,
-      }),
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    return data.choices?.[0]?.message?.content?.trim() ?? null;
-  } catch {
-    return null;
-  }
+  return chatText({
+    system: "You write concise casino operations analyst rationales.",
+    user: userPrompt,
+    temperature: 0.3,
+    maxTokens: 200,
+  });
 }
 
 function buildDeterministicRationale(

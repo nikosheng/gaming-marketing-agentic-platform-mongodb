@@ -1,7 +1,8 @@
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { Db } from "mongodb";
 import { webCollections } from "./collections";
-import { generateEmbedding } from "./embedding";
+import { generateEmbedding } from "./llm/embeddings";
+import { chatJson } from "./llm/gateway";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -89,41 +90,6 @@ const OfferAgentState = Annotation.Root({
   error: Annotation<string | null>,
 });
 
-// ─── Azure OpenAI helper ──────────────────────────────────────────────────────
-
-async function callAzureOpenAI(
-  messages: Array<{ role: string; content: string }>,
-  maxTokens = 1500
-): Promise<string | null> {
-  const endpoint = process.env.AZURE_OPENAI_ENDPOINT;
-  const apiKey = process.env.AZURE_OPENAI_API_KEY;
-  const deployment = process.env.AZURE_OPENAI_DEPLOYMENT ?? "gpt-4o-mini";
-  const apiVersion = process.env.AZURE_OPENAI_API_VERSION ?? "2024-08-01-preview";
-
-  if (!endpoint || !apiKey) return null;
-
-  try {
-    const url = `${endpoint.replace(/\/$/, "")}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "api-key": apiKey },
-      body: JSON.stringify({
-        messages,
-        temperature: 0.2,
-        max_completion_tokens: maxTokens,
-        response_format: { type: "json_object" },
-      }),
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    return data.choices?.[0]?.message?.content?.trim() ?? null;
-  } catch {
-    return null;
-  }
-}
-
 // ─── LLM-based criteria parser (replaces regex parseCriteria) ────────────────
 
 async function parseCriteriaWithLLM(prompt: string): Promise<ParsedCriteria | null> {
@@ -178,13 +144,12 @@ async function parseCriteriaWithLLM(prompt: string): Promise<ParsedCriteria | nu
 - tiers、gameTypes、regions 必須使用上方列出的英文枚舉值
 - 大灣區 = HongKong + Guangdong + OtherGBA（若用戶提及「大灣區」，填入這三個）`;
 
-  const raw = await callAzureOpenAI(
-    [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: prompt },
-    ],
-    1500
-  );
+  const raw = await chatJson({
+    system: systemPrompt,
+    user: prompt,
+    temperature: 0.2,
+    maxTokens: 1500,
+  });
 
   if (!raw) return null;
 

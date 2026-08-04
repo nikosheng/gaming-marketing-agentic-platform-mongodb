@@ -169,17 +169,60 @@ cp .env.example .env.local
 |---|---|---|
 | `MONGODB_URI` | Yes | MongoDB Atlas connection string |
 | `MONGODB_DB` | No | Database name (default: `casino_marketing_demo`) |
-| `AZURE_OPENAI_ENDPOINT` | Yes* | Azure OpenAI endpoint URL |
-| `AZURE_OPENAI_API_KEY` | Yes* | Azure OpenAI API key |
-| `AZURE_OPENAI_DEPLOYMENT` | No | Deployment name (default: `gpt-4o-mini`) |
-| `AZURE_OPENAI_API_VERSION` | No | API version (default: `2024-08-01-preview`) |
-| `VOYAGE_API_KEY` | Yes** | Voyage AI API key for embeddings |
+| `LITELLM_BASE_URL` | Yes* | LiteLLM gateway URL (default: `http://localhost:4000`) |
+| `LITELLM_API_KEY` | Yes* | LiteLLM master key (Bearer token for the gateway) |
+| `LLM_CHAT_MODEL` | No | Chat model alias in LiteLLM (default: `chat-primary`) |
+| `LLM_EMBEDDING_MODEL` | No | Embedding model alias (default: `voyage-4-nano`) |
 | `VECTOR_EMBEDDING_DIM` | No | Embedding dimension (default: `1024`) |
 | `SEED_PATRON_COUNT` | No | Number of patrons to seed (default: `300`) |
 | `SEED_TABLE_COUNT` | No | Number of tables to seed (default: `30`) |
 
-\* Required for Alert Dashboard AI rationale, Patron Analysis, and PR Efficiency KPI insight.  
-\*\* Required for PR Efficiency KPI vector search and interaction embedding generation.
+\* Required for all LLM-driven features (Alert Dashboard AI rationale, Patron
+Analysis, PR Efficiency KPI insight/search, Offer NL parsing). Physical
+routing (Azure OpenAI, OpenAI fallback, local Voyage embedding) is configured
+inside `infra/litellm/config.yaml` — the app never talks to providers
+directly. See [`docs/llm-gateway.md`](docs/llm-gateway.md).
+
+---
+
+## Local LLM Gateway
+
+The app now depends on a local **LiteLLM** gateway that fronts Azure OpenAI
+(chat) and a self-hosted **Text-Embeddings-Inference** container running
+`voyageai/voyage-4-nano` (embeddings). Everything ships as a single
+`docker-compose` stack under `infra/`.
+
+```bash
+# 1. Fill provider secrets that the gateway needs
+cp infra/.env.example infra/.env
+# edit infra/.env: AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_KEY / LITELLM_MASTER_KEY
+
+# 2. Start the stack (litellm + tei + redis)
+npm run llm:up
+
+# 3. Point the app at the gateway (in .env.local)
+LITELLM_BASE_URL=http://localhost:4000
+LITELLM_API_KEY=<value of LITELLM_MASTER_KEY>
+
+# 4. Sanity-check the gateway end-to-end
+npm run llm:smoke
+```
+
+Useful commands:
+
+| Command | Purpose |
+|---|---|
+| `npm run llm:up` | Start litellm + tei + redis containers |
+| `npm run llm:down` | Stop the stack |
+| `npm run llm:logs` | Tail all container logs |
+| `npm run llm:smoke` | End-to-end chat + embedding sanity check |
+
+The first launch of `tei` downloads ~700 MB of `voyage-4-nano` weights into a
+Docker volume; subsequent starts are instant. On a CPU-only Debian 12 host
+with a modern Xeon/EPYC, expect 200–400 ms per embedding (batching helps).
+
+Full details, including how to enable the OpenAI fallback slot, are in
+[`docs/llm-gateway.md`](docs/llm-gateway.md).
 
 ---
 

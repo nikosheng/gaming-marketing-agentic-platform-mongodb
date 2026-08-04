@@ -15,7 +15,11 @@
     "backfill:interactions": "tsx src/scripts/backfill-interaction-embeddings.ts",
     "migrate:activities": "tsx src/scripts/migrate-activities-to-patrons.ts",
     "check": "tsc --noEmit",
-    "stop": "kill-port 3000"
+    "stop": "kill-port 3000",
+    "llm:up": "docker compose -f infra/docker-compose.yml up -d",
+    "llm:down": "docker compose -f infra/docker-compose.yml down",
+    "llm:logs": "docker compose -f infra/docker-compose.yml logs -f",
+    "llm:smoke": "tsx src/web/llm/__smoke__/gateway.smoke.ts"
   },
   "keywords": [],
   "author": "",
@@ -30,6 +34,7 @@
     "langsmith": "^0.7.3",
     "mongodb": "^7.2.0",
     "next": "^16.2.4",
+    "openai": "^4.104.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
   },

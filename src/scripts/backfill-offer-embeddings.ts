@@ -8,11 +8,10 @@ import { MongoClient } from "mongodb";
 import dotenv from "dotenv";
 import { config } from "../config.js";
 import { webCollections } from "../web/collections.js";
+import { generateEmbeddingBatch } from "../web/llm/embeddings.js";
 
 dotenv.config();
 
-const VOYAGE_API_URL = "https://ai.mongodb.com/v1/embeddings";
-const MODEL = "voyage-4";
 const BATCH_SIZE = 50;
 
 const offerTypeZh: Record<string, string> = {
@@ -24,32 +23,21 @@ const offerTypeZh: Record<string, string> = {
   TransportVoucher: "專車接送禮券",
 };
 
+/**
+ * Batch embed via LiteLLM gateway → local TEI (voyage-4-nano, 1024 dim).
+ * Fails hard if the gateway returns an all-zero result — this keeps backfill
+ * data quality from silently degrading.
+ */
 async function generateEmbeddingsBatch(texts: string[]): Promise<number[][]> {
-  const apiKey = config.voyageApiKey;
-  if (!apiKey) throw new Error("VOYAGE_API_KEY is missing in .env");
-
-  const response = await fetch(VOYAGE_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      input: texts,
-      model: MODEL,
-      input_type: "document",
-    }),
-  });
-
-  if (!response.ok) {
-    const errBody = await response.text();
-    throw new Error(`Voyage AI API error (${response.status}): ${errBody}`);
+  if (!config.llm.apiKey) {
+    throw new Error("LITELLM_API_KEY is missing — please configure LLM gateway credentials.");
   }
-
-  const data = await response.json();
-  return (data.data as Array<{ index: number; embedding: number[] }>)
-    .sort((a, b) => a.index - b.index)
-    .map((item) => item.embedding);
+  const vectors = await generateEmbeddingBatch(texts, "document");
+  const anyZero = vectors.some((v) => v.every((x) => x === 0));
+  if (anyZero) {
+    throw new Error("LLM gateway returned zero-vector(s) — check LiteLLM/TEI health.");
+  }
+  return vectors;
 }
 
 function buildOfferEmbeddingText(offer: Record<string, unknown>): string {
@@ -79,10 +67,7 @@ async function run() {
 
     let updated = 0;
     for (let i = 0; i < offers.length; i += BATCH_SIZE) {
-      if (i > 0) {
-        console.log("Waiting 22s for Voyage AI rate limit...");
-        await new Promise((r) => setTimeout(r, 22000));
-      }
+      // Local TEI has no RPM limit — batch pacing is unnecessary.
       const batch = offers.slice(i, i + BATCH_SIZE);
       const texts = batch.map((o) => buildOfferEmbeddingText(o as Record<string, unknown>));
 

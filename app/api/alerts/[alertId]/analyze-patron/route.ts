@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getWebDb } from "../../../../../src/web/mongo";
 import { webCollections } from "../../../../../src/web/collections";
 import { runPatronProfileAnalysis } from "../../../../../src/web/patron-profile-agent";
+import { isGatewayConfigured } from "../../../../../src/web/llm/gateway";
 import type { PatronAlert, PatronAnalysisReport } from "../../../../../src/types";
 
 type Params = { params: Promise<{ alertId: string }> };
@@ -17,9 +18,9 @@ export async function POST(_req: NextRequest, { params }: Params) {
   try {
     const { alertId } = await params;
 
-    if (!process.env.AZURE_OPENAI_ENDPOINT || !process.env.AZURE_OPENAI_API_KEY) {
+    if (!isGatewayConfigured()) {
       return NextResponse.json(
-        { ok: false, error: "Azure OpenAI is not configured." },
+        { ok: false, error: "LLM gateway is not configured (LITELLM_BASE_URL / LITELLM_API_KEY missing)." },
         { status: 503 }
       );
     }

@@ -5,15 +5,14 @@
  * `patron_interaction_history` that were created without an embedding
  * (e.g. by seed-interactions.ts).
  *
- * Sends records to Voyage AI in batches of up to BATCH_SIZE (128) per request,
- * and processes multiple batches concurrently (CONCURRENCY). No artificial
- * rate-limit delay — suitable for Atlas-hosted Voyage AI with no RPM cap.
+ * Sends records to the LiteLLM gateway → local TEI (voyage-4-nano) in batches
+ * of up to BATCH_SIZE (128), with bounded concurrency (CONCURRENCY).
  *
  * Usage:
  *   npm run backfill:interactions
  *
  * Requirements:
- *   VOYAGE_API_KEY must be set in .env
+ *   LITELLM_BASE_URL and LITELLM_API_KEY must be set in .env
  */
 
 import dotenv from "dotenv";
@@ -25,7 +24,8 @@ import { collections } from "../modeling/indexes.js";
 import {
   generateEmbeddingBatch,
   buildInteractionEmbeddingText,
-} from "../web/embedding.js";
+} from "../web/llm/embeddings.js";
+import { config } from "../config.js";
 import type { PatronInteractionRecord } from "../types.js";
 
 /** Voyage AI max inputs per request */
@@ -91,8 +91,8 @@ async function processBatch(
 }
 
 async function backfillInteractionEmbeddings() {
-  if (!process.env.VOYAGE_API_KEY) {
-    console.error("VOYAGE_API_KEY is not set in .env — cannot generate embeddings.");
+  if (!config.llm.apiKey) {
+    console.error("LITELLM_API_KEY is not set in .env — cannot generate embeddings.");
     process.exitCode = 1;
     return;
   }

@@ -2,17 +2,14 @@ import { MongoClient, ObjectId } from "mongodb";
 import dotenv from "dotenv";
 import { config } from "../config.js";
 import { webCollections } from "../web/collections.js";
+import { generateEmbeddingBatch } from "../web/llm/embeddings.js";
 
 dotenv.config();
 
-const VOYAGE_API_URL = "https://ai.mongodb.com/v1/embeddings";
-const MODEL = "voyage-4";
 const BATCH_SIZE = 50;
 
 const BEHAVIOR_TAGS = ["Aggressive", "Conservative", "LateNight", "CardCounterWatch", "PromoSeeker"] as const;
 const GAME_TYPES = ["Baccarat", "Blackjack", "Roulette", "SicBo", "DragonTiger", "PokerRoom"] as const;
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Pick `count` random items from an array without repeating. */
 function randomSample<T>(arr: readonly T[], min: number, max: number): T[] {
@@ -21,32 +18,22 @@ function randomSample<T>(arr: readonly T[], min: number, max: number): T[] {
   return shuffled.slice(0, Math.min(count, arr.length));
 }
 
+/**
+ * Batch embed via LiteLLM gateway → local TEI (voyage-4-nano, 1024 dim).
+ * Fails hard if the gateway returns an all-zero result (interpreted as
+ * degraded state from the shared client) — this keeps backfill data quality
+ * from silently corrupting.
+ */
 async function generateEmbeddingsBatch(texts: string[]): Promise<number[][]> {
-  const apiKey = config.voyageApiKey;
-  if (!apiKey) {
-    throw new Error("VOYAGE_API_KEY is missing in .env");
+  if (!config.llm.apiKey) {
+    throw new Error("LITELLM_API_KEY is missing — please configure LLM gateway credentials.");
   }
-
-  const response = await fetch(VOYAGE_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      input: texts,
-      model: MODEL,
-      input_type: "document",
-    }),
-  });
-
-  if (!response.ok) {
-    const errBody = await response.text();
-    throw new Error(`Voyage AI API error (${response.status}): ${errBody}`);
+  const vectors = await generateEmbeddingBatch(texts, "document");
+  const anyZero = vectors.some((v) => v.every((x) => x === 0));
+  if (anyZero) {
+    throw new Error("LLM gateway returned zero-vector(s) — check LiteLLM/TEI health.");
   }
-
-  const data = await response.json();
-  return data.data.map((item: any) => item.embedding);
+  return vectors;
 }
 
 async function backfillOffers(db: any) {
@@ -56,7 +43,7 @@ async function backfillOffers(db: any) {
   console.log(`Found ${offers.length} offers to process.`);
 
   for (let i = 0; i < offers.length; i += BATCH_SIZE) {
-    if (i > 0) await sleep(21000); // 3 RPM limit
+    // Local TEI has no RPM limit — batch pacing is unnecessary.
     const batch = offers.slice(i, i + BATCH_SIZE);
     const offerTypeZh: Record<string, string> = {
       HotelRoom: "酒店禮遇",
@@ -162,8 +149,7 @@ async function backfillPatrons(db: any) {
   const sessionMap = await ensurePatronSessions(db, patrons);
 
   for (let i = 0; i < patrons.length; i += BATCH_SIZE) {
-    // Always sleep before patron batches because we just finished offers
-    await sleep(21000);
+    // Local TEI has no RPM limit — batch pacing is unnecessary.
     const batch = patrons.slice(i, i + BATCH_SIZE);
 
     const regionZh: Record<string, string> = {
@@ -213,9 +199,6 @@ async function run() {
   try {
     await client.connect();
     const db = client.db(config.databaseName);
-
-    console.log("Waiting 21s to reset rate limits...");
-    await sleep(21000);
 
     await backfillOffers(db);
     await backfillPatrons(db);

@@ -18,5 +18,25 @@ export const config = {
   vectorEmbeddingDim: numeric("VECTOR_EMBEDDING_DIM", 1024),
   seedPatronCount: numeric("SEED_PATRON_COUNT", 300),
   seedTableCount: numeric("SEED_TABLE_COUNT", 30),
+
+  /**
+   * @deprecated Since migration to LiteLLM gateway. Retained only for
+   * backwards-compat rollback; app-side code should not read this.
+   * Voyage embeddings now flow through `config.llm` → LiteLLM → local TEI.
+   */
   voyageApiKey: process.env.VOYAGE_API_KEY,
+
+  /**
+   * LLM gateway (LiteLLM) settings.
+   * All chat and embedding traffic goes through a single OpenAI-compatible
+   * endpoint at `baseUrl`. Model routing (Azure vs. OpenAI fallback vs. local
+   * TEI) is configured server-side in infra/litellm/config.yaml.
+   */
+  llm: {
+    baseUrl: process.env.LITELLM_BASE_URL ?? "http://localhost:4000",
+    apiKey: process.env.LITELLM_API_KEY ?? "",
+    chatModel: process.env.LLM_CHAT_MODEL ?? "chat-primary",
+    embeddingModel: process.env.LLM_EMBEDDING_MODEL ?? "voyage-4-nano",
+    embeddingDim: numeric("VECTOR_EMBEDDING_DIM", 1024),
+  },
 };

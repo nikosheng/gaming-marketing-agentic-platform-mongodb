@@ -1,6 +1,7 @@
 import { Db } from "mongodb";
 import type { AlertRule, ConditionType, PatronAlert, TableRoundSnapshot } from "../types";
 import { webCollections } from "./collections";
+import { chatText } from "./llm/gateway";
 
 // ---------- Types ----------
 
@@ -359,15 +360,6 @@ async function generateAlertRationale(
   triggeredConditions: PatronAlert["triggeredConditions"],
   tableSnapshot: PatronAlert["tableSnapshot"]
 ): Promise<string | null> {
-  const endpoint = process.env.AZURE_OPENAI_ENDPOINT;
-  const apiKey = process.env.AZURE_OPENAI_API_KEY;
-  const deployment = process.env.AZURE_OPENAI_DEPLOYMENT ?? "gpt-4o-mini";
-  const apiVersion = process.env.AZURE_OPENAI_API_VERSION ?? "2024-08-01-preview";
-
-  if (!endpoint || !apiKey) return null;
-
-  const url = `${endpoint.replace(/\/$/, "")}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`;
-
   const conditionSummary = triggeredConditions
     .map((tc) => {
       const ev = tc.evidence as Record<string, unknown>;
@@ -394,30 +386,12 @@ async function generateAlertRationale(
 
 請用 1-2 句繁體中文寫出這個告警的重要性，並給出一個具體的服務建議（例如：立即安排 VIP 專員介入，提供XXX服務）。字數控制在 50 字以內。`;
 
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "api-key": apiKey },
-      body: JSON.stringify({
-        messages: [
-          {
-            role: "system",
-            content: "你是賭場貴賓服務 AI，專責識別高價值客戶並給出簡短服務建議。",
-          },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.4,
-        max_completion_tokens: 120,
-      }),
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    return data.choices?.[0]?.message?.content?.trim() ?? null;
-  } catch {
-    return null;
-  }
+  return chatText({
+    system: "你是賭場貴賓服務 AI，專責識別高價值客戶並給出簡短服務建議。",
+    user: userPrompt,
+    temperature: 0.4,
+    maxTokens: 120,
+  });
 }
 
 // ---------- Main: analyze one rule with OR logic ----------

@@ -9,6 +9,8 @@ import type {
   InteractionType,
 } from "../types";
 import { webCollections } from "./collections";
+import { chatJson } from "./llm/gateway";
+import { config } from "../config";
 
 // ---------- Helpers ----------
 
@@ -59,39 +61,6 @@ function formatInteractionForPrompt(rec: PatronInteractionRecord): string {
   }
 
   return `• ${date} [${typeLabel}]${value}${detail ? ` — ${detail}` : ""}`;
-}
-
-// ---------- LLM Call ----------
-
-async function callLlm(prompt: string, systemPrompt: string): Promise<string | null> {
-  const endpoint = process.env.AZURE_OPENAI_ENDPOINT;
-  const apiKey   = process.env.AZURE_OPENAI_API_KEY;
-  const deployment = process.env.AZURE_OPENAI_DEPLOYMENT ?? "gpt-4o-mini";
-  const apiVersion = process.env.AZURE_OPENAI_API_VERSION ?? "2024-08-01-preview";
-
-  if (!endpoint || !apiKey) return null;
-
-  const url = `${endpoint.replace(/\/$/, "")}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`;
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "api-key": apiKey },
-    body: JSON.stringify({
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user",   content: prompt },
-      ],
-      temperature: 0.5,
-      max_completion_tokens: 800,
-      response_format: { type: "json_object" },
-    }),
-  });
-
-  if (!res.ok) return null;
-  const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  return data.choices?.[0]?.message?.content?.trim() ?? null;
 }
 
 // ---------- Main Export ----------
@@ -216,8 +185,13 @@ actionType 只能為 "ROOM_COMP"、"FB_COMP"、"REBATE"、"EVENT_INVITE"、"OUTR
   const systemPrompt =
     "你是澳門貴賓廳行銷分析師，專責分析高價值賭客的歷史行為並給出銷售行動建議。請嚴格按照指定 JSON 格式輸出，不要添加任何額外說明文字。";
 
-  // 6. Call LLM
-  const llmRaw = await callLlm(userPrompt, systemPrompt);
+  // 6. Call LLM (via LiteLLM gateway)
+  const llmRaw = await chatJson({
+    system: systemPrompt,
+    user: userPrompt,
+    temperature: 0.5,
+    maxTokens: 800,
+  });
 
   // 7. Parse LLM output or fallback
   let parsed: {
@@ -265,7 +239,6 @@ actionType 只能為 "ROOM_COMP"、"FB_COMP"、"REBATE"、"EVENT_INVITE"、"OUTR
 
   // 9. Build report document
   const now = new Date();
-  const deployment = process.env.AZURE_OPENAI_DEPLOYMENT ?? "gpt-4o-mini";
 
   const report: PatronAnalysisReport = {
     reportId: `RPT-${now.getTime()}-${patronId}`.replace(/[^A-Z0-9-]/gi, "-"),
@@ -279,7 +252,9 @@ actionType 只能為 "ROOM_COMP"、"FB_COMP"、"REBATE"、"EVENT_INVITE"、"OUTR
     suggestedPrId: parsed.suggestedPrId ?? undefined,
     suggestedPrName,
     generatedAt: now,
-    modelUsed: deployment,
+    // modelUsed records the gateway alias; the actual physical deployment is
+    // resolved by LiteLLM's routing rules and can change without a code update.
+    modelUsed: config.llm.chatModel,
     status: "Draft",
   };
 

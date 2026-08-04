@@ -8,7 +8,8 @@ import type {
   PRAgentProfile,
 } from "../types";
 import { webCollections } from "./collections";
-import { generateEmbedding } from "./embedding";
+import { generateEmbedding } from "./llm/embeddings";
+import { chatJson, isGatewayConfigured } from "./llm/gateway";
 
 // ---------- PR Metrics ----------
 
@@ -278,12 +279,7 @@ async function generateKpiInsight(
     actions: ["請確保已記錄足夠的互動資料後再次搜尋。"],
   };
 
-  const endpoint = process.env.AZURE_OPENAI_ENDPOINT;
-  const apiKey   = process.env.AZURE_OPENAI_API_KEY;
-  const deployment = process.env.AZURE_OPENAI_DEPLOYMENT ?? "gpt-4o-mini";
-  const apiVersion = process.env.AZURE_OPENAI_API_VERSION ?? "2024-08-01-preview";
-
-  if (!endpoint || !apiKey) return fallback;
+  if (!isGatewayConfigured()) return fallback;
 
   const prSummary = results
     .map(
@@ -316,38 +312,24 @@ ${prSummary}
 - 若所有人達成率均為 0%，建議管理層先建立此類互動的記錄習慣
 `.trim();
 
+  const raw = await chatJson({
+    system:
+      "你是賭場行銷管理顧問，專責分析公關人員績效並給出管理建議。請嚴格按指定 JSON 格式輸出。",
+    user: userPrompt,
+    temperature: 0.4,
+    maxTokens: 10000,
+  });
+
+  if (!raw) return fallback;
+
   try {
-    const url = `${endpoint.replace(/\/$/, "")}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "api-key": apiKey },
-      body: JSON.stringify({
-        messages: [
-          {
-            role: "system",
-            content: "你是賭場行銷管理顧問，專責分析公關人員績效並給出管理建議。請嚴格按指定 JSON 格式輸出。",
-          },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.4,
-        max_completion_tokens: 10000,
-        response_format: { type: "json_object" },
-      }),
-    });
-
-    if (!res.ok) return fallback;
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const raw = data.choices?.[0]?.message?.content?.trim();
-    if (!raw) return fallback;
-
     const parsed = JSON.parse(raw) as { insight?: string; actions?: string[] };
     return {
       insight: parsed.insight ?? fallback.insight,
-      actions: Array.isArray(parsed.actions) && parsed.actions.length > 0
-        ? parsed.actions
-        : fallback.actions,
+      actions:
+        Array.isArray(parsed.actions) && parsed.actions.length > 0
+          ? parsed.actions
+          : fallback.actions,
     };
   } catch {
     return fallback;

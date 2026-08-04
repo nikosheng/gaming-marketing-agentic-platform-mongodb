@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getWebDb } from "../../../../src/web/mongo";
 import { runKpiSearch } from "../../../../src/web/pr-efficiency-agent";
+import { config } from "../../../../src/config";
 
 /**
  * POST /api/pr-efficiency/kpi-search
@@ -24,10 +25,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Voyage AI is required for vector search
-    if (!process.env.VOYAGE_API_KEY) {
+    // LLM gateway is required for embedding-based vector search
+    if (!config.llm.apiKey) {
       return NextResponse.json(
-        { ok: false, error: "VOYAGE_API_KEY is not configured — vector search unavailable." },
+        { ok: false, error: "LITELLM_API_KEY is not configured — vector search unavailable." },
         { status: 503 }
       );
     }

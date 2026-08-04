@@ -1,0 +1,72 @@
+# ------------------------------------------------------------------------------
+# LiteLLM Gateway configuration.
+#
+# All app-side code refers to model aliases:
+#   - chat-primary       → Azure OpenAI  gpt-5.4-mini-2  (fallback slot reserved)
+#   - voyage-4-nano      → local TEI container serving voyageai/voyage-4-nano
+#
+# Clients authenticate with LITELLM_MASTER_KEY as Bearer token.
+# ------------------------------------------------------------------------------
+
+model_list:
+  # ==== Chat: Azure OpenAI (primary) ========================================
+  - model_name: chat-primary
+    litellm_params:
+      model: azure/gpt-5.4-mini-2
+      api_base: os.environ/AZURE_OPENAI_ENDPOINT
+      api_key:  os.environ/AZURE_OPENAI_API_KEY
+      api_version: os.environ/AZURE_OPENAI_API_VERSION
+
+  # ==== Chat: OpenAI fallback (disabled, reserved slot) =====================
+  # To enable:
+  #   1. Uncomment this block.
+  #   2. Uncomment router_settings.fallbacks below.
+  #   3. Set OPENAI_API_KEY in infra/.env
+  #   4. docker compose restart litellm
+  #
+  # - model_name: chat-primary
+  #   litellm_params:
+  #     model: openai/gpt-4o-mini
+  #     api_key: os.environ/OPENAI_API_KEY
+
+  # ==== Embedding: local TEI (voyage-4-nano) ================================
+  # The TEI container exposes an OpenAI-compatible /v1/embeddings endpoint.
+  # Requests forwarded here will hit http://tei:80/v1/embeddings.
+  - model_name: voyage-4-nano
+    litellm_params:
+      model: openai/voyageai/voyage-4-nano
+      api_base: http://tei:80
+      api_key: "not-needed"
+
+router_settings:
+  redis_host: redis
+  redis_port: 6379
+  routing_strategy: simple-shuffle
+  # Enable fallback once the OpenAI slot above is uncommented:
+  # fallbacks:
+  #   - chat-primary: [chat-primary]  # LiteLLM will attempt the next matching entry
+  num_retries: 2
+  timeout: 60
+  allowed_fails: 3
+  cooldown_time: 30
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  # Set to true to disable the /v1 auth requirement (not recommended in prod)
+  # disable_auth: false
+
+litellm_settings:
+  drop_params: true          # silently drop unsupported params instead of erroring
+  set_verbose: false
+  request_timeout: 60
+  cache: true
+  cache_params:
+    type: redis
+    host: redis
+    port: 6379
+    ttl: 3600                # 1h cache for identical requests
+  # Observability (Langfuse) is intentionally NOT enabled in this phase.
+  # To enable later:
+  #   success_callback: ["langfuse"]
+  #   failure_callback: ["langfuse"]
+  # ... and add LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST env vars.
