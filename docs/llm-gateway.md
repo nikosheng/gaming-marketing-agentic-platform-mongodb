@@ -1,48 +1,62 @@
-# LLM Gateway (LiteLLM + local Voyage embedding)
+# LLM Gateway (LiteLLM chat) + in-process Voyage embeddings
 
 This document describes the LLM infrastructure that fronts every AI call in
-the app. The gateway lives under `infra/` and is deployed as a docker-compose
-stack targeted at Debian 12 x86_64 (CPU-only).
+the app. After the Aug-2026 migration to a Python backend, the two paths are
+independent:
+
+- **Chat** goes through a local **LiteLLM** gateway (Docker) that fronts
+  Azure OpenAI, with an optional OpenAI fallback slot.
+- **Embeddings** run **in-process** inside the FastAPI backend using the
+  official `voyageai[local]` Python SDK. There is no longer a TEI container
+  or any external embedding service.
+
+The gateway lives under `infra/` and is deployed as a docker-compose stack
+targeted at Debian 12 x86_64 (CPU-only).
 
 ---
 
 ## 1. Architecture
 
 ```
-┌───────────────────────────┐    Bearer LITELLM_API_KEY
-│  Next.js App              │────────────────────────────────┐
-│  (src/web/llm/gateway.ts) │                                │
-│  (src/web/llm/embeddings) │       OpenAI-compatible /v1    │
-└───────────────────────────┘                                ▼
-                                                ┌──────────────────────┐
-                                                │  LiteLLM  :4000      │
-                                                │  (docker)            │
-                                                └───┬──────────┬───────┘
-                                                    │          │
-                    chat-primary alias  ────────────┘          └──────────── voyage-4-nano alias
-                                    │                                                 │
-                                    ▼                                                 ▼
-                        ┌────────────────────┐                            ┌──────────────────────┐
-                        │  Azure OpenAI      │                            │  TEI (docker)        │
-                        │  (cloud, primary)  │                            │  :8080 → :80         │
-                        └────────────────────┘                            │  voyageai/           │
-                                                                          │  voyage-4-nano       │
-                        (OpenAI fallback slot                              │  dim=1024 (MRL)      │
-                         reserved but disabled)                           └──────────────────────┘
+┌───────────────────────────┐
+│  Next.js UI               │
+│  browser fetch /api/*     │
+└───────────────┬───────────┘
+                │ next.config.mjs rewrite
+                ▼
+┌───────────────────────────────────┐        Bearer LITELLM_API_KEY
+│  FastAPI backend (server/)        │───────────────────────────┐
+│    app/llm/gateway.py  (chat)     │                           │
+│    app/llm/embeddings.py (voyage) │───┐                       │
+└───────────────────────────────────┘   │  in-process           │
+                                        ▼                       ▼
+                          ┌───────────────────────┐   ┌──────────────────────┐
+                          │  voyageai[local]      │   │  LiteLLM :4000       │
+                          │  voyage-4-nano        │   │  (docker)            │
+                          │  dim=1024             │   └───┬──────────────────┘
+                          └───────────────────────┘       │
+                                                          ▼
+                                              ┌────────────────────┐
+                                              │  Azure OpenAI      │
+                                              │  (chat-primary)    │
+                                              └────────────────────┘
+                                          (OpenAI fallback slot reserved)
 ```
 
 **Key properties**
 
-- Single source of truth for provider routing: `infra/litellm/config.yaml`.
-  The app only knows two aliases: `chat-primary` and `voyage-4-nano`.
-- Physical model, provider, key rotation, retries, and caching are the
-  gateway's responsibility. Code changes are not required to swap providers.
-- Embedding output is truncated to 1024 dim via voyage-4-nano's Matryoshka
-  Representation Learning, keeping existing Mongo Atlas Vector Search
-  indexes valid.
-- Voyage 4 family shares an embedding space, so vectors produced locally by
-  `voyage-4-nano` remain comparable with historical vectors produced by the
-  cloud `voyage-4` model — no re-indexing required.
+- Single source of truth for chat routing: `infra/litellm/config.yaml`.
+  The backend only knows one chat alias: `chat-primary`.
+- Provider, key rotation, retries, and caching are the gateway's
+  responsibility for chat. No code change is required to swap chat providers.
+- Embeddings are dimensioned to 1024 via voyage-4-nano's Matryoshka
+  Representation Learning (`output_dimension=1024`), keeping existing Mongo
+  Atlas Vector Search indexes valid.
+- The Voyage-4 family shares an embedding space; vectors produced locally
+  by `voyage-4-nano` remain broadly comparable with historical vectors
+  produced by the cloud `voyage-4` model. After the migration we recommend
+  running the three backfill scripts once to regenerate all vectors with the
+  local model.
 
 ---
 
@@ -50,18 +64,17 @@ stack targeted at Debian 12 x86_64 (CPU-only).
 
 ```
 infra/
-├── docker-compose.yml       # 3 services: litellm, tei, redis
-├── .env.example             # provider secrets (copy to infra/.env)
+├── docker-compose.yml       # 2 services: litellm, redis
+├── .env.example             # provider secrets (mirror at repo root .env)
 └── litellm/
     └── config.yaml          # model_list + router + cache
 
-src/web/llm/
-├── gateway.ts               # chatText() / chatJson() / isGatewayConfigured()
-├── embeddings.ts            # generateEmbedding() / generateEmbeddingBatch()
-└── __smoke__/
-    └── gateway.smoke.ts     # `npm run llm:smoke`
+server/app/llm/
+├── gateway.py               # chat_text() / chat_json() / is_gateway_configured()
+└── embeddings.py            # generate_embedding() / generate_embedding_batch()
 
-src/web/embedding.ts          # thin re-export shim → llm/embeddings
+server/app/smoke/
+└── gateway_smoke.py         # `uv run python -m app.smoke.gateway_smoke`
 ```
 
 ---
@@ -73,26 +86,31 @@ Aliases the app is allowed to request:
 | Alias | Backend | Purpose |
 |-------|---------|---------|
 | `chat-primary` | Azure OpenAI `gpt-5.4-mini-2` | All chat completions |
-| `voyage-4-nano` | Local TEI (`http://tei:80`) | All embeddings, 1024 dim |
 
 A commented-out slot for `openai/gpt-4o-mini` fallback exists in
 `litellm/config.yaml`. See section 5 to enable it.
+
+**Embeddings are NOT listed here.** They are produced by the Python
+`voyageai` SDK. See `server/app/llm/embeddings.py`.
 
 ---
 
 ## 4. Environment variables
 
-**App-side** (`.env.local`)
+**Backend-side** (`.env` at repo root — read by both Next.js and the Python
+service via `pydantic-settings`)
 
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `LITELLM_BASE_URL` | `http://localhost:4000` | Gateway base URL |
 | `LITELLM_API_KEY` | — | Must match `LITELLM_MASTER_KEY` on the gateway |
-| `LLM_CHAT_MODEL` | `chat-primary` | Alias used by `gateway.chatText/chatJson` |
-| `LLM_EMBEDDING_MODEL` | `voyage-4-nano` | Alias used by `generateEmbedding` |
-| `VECTOR_EMBEDDING_DIM` | `1024` | Passed to TEI via OpenAI-compatible `dimensions` param |
+| `LLM_CHAT_MODEL` | `chat-primary` | Alias used by `chat_text` / `chat_json` |
+| `LLM_EMBEDDING_MODEL` | `voyage-4-nano` | Voyage model name |
+| `VECTOR_EMBEDDING_DIM` | `1024` | Passed to voyage SDK as `output_dimension` |
+| `VOYAGE_API_KEY` | — | Optional — only if you switch to the hosted API |
+| `EMBED_WARMUP_ON_START` | `true` | Preload voyage weights during FastAPI lifespan |
 
-**Gateway-side** (`infra/.env`, never read by the app)
+**Gateway-side** (also in the same `.env`; the LiteLLM container reads them)
 
 | Variable | Notes |
 |----------|-------|
@@ -101,7 +119,6 @@ A commented-out slot for `openai/gpt-4o-mini` fallback exists in
 | `AZURE_OPENAI_API_VERSION` | Default `2024-12-01-preview` |
 | `OPENAI_API_KEY` | Only needed once the fallback slot is enabled |
 | `LITELLM_MASTER_KEY` | Bearer token clients must present |
-| `HF_TOKEN` | Optional; not needed for voyage-4-nano |
 
 ---
 
@@ -119,35 +136,31 @@ order on failure. To activate OpenAI as fallback:
        api_key: os.environ/OPENAI_API_KEY
    ```
 
-2. In `infra/.env`, set `OPENAI_API_KEY`.
+2. Set `OPENAI_API_KEY` in your `.env`.
 3. Restart the gateway:
 
    ```
    docker compose -f infra/docker-compose.yml restart litellm
    ```
 
-No app-side change is required.
+No backend code change is required.
 
 ---
 
-## 6. Switching / adding embedding models
+## 6. Switching embedding models
 
-Everything lives in `infra/litellm/config.yaml` under a new `model_list`
-entry. Example — adding an OpenAI fallback for embeddings:
+Because embeddings are done in-process, there's no gateway config to touch.
+Set `LLM_EMBEDDING_MODEL` to any Voyage model name supported by
+`voyageai[local]` and restart the FastAPI service. If dimensions change,
+update `VECTOR_EMBEDDING_DIM` **and** rebuild the Atlas Vector Search
+indexes.
 
-```yaml
-- model_name: voyage-4-nano   # keep the same alias
-  litellm_params:
-    model: openai/text-embedding-3-small
-    api_key: os.environ/OPENAI_API_KEY
-```
-
-If dimensions change, update `VECTOR_EMBEDDING_DIM` in `.env.local` **and**
-rebuild the Atlas Vector Search indexes.
+To go back to the hosted Voyage API (paid), set `VOYAGE_API_KEY` — the SDK
+will use it automatically. The rest of the code path is unchanged.
 
 ---
 
-## 7. Adding Langfuse (deferred to a later phase)
+## 7. Adding Langfuse (deferred)
 
 To enable observability later, append to `litellm/config.yaml`:
 
@@ -165,7 +178,9 @@ LANGFUSE_SECRET_KEY=...
 LANGFUSE_HOST=https://cloud.langfuse.com   # or self-hosted URL
 ```
 
-No app-side code change is needed — LiteLLM emits traces automatically.
+No backend code change is needed for chat — LiteLLM emits traces
+automatically. Embeddings are outside the gateway, so they will not be
+traced by LiteLLM/Langfuse.
 
 ---
 
@@ -173,16 +188,21 @@ No app-side code change is needed — LiteLLM emits traces automatically.
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| `LITELLM_API_KEY is not set` at app boot | Missing app-side env | Set `LITELLM_API_KEY` in `.env.local` |
-| Embeddings return zero-vectors | TEI still downloading model | Wait ~1 min; `docker compose logs tei` |
-| 401 from gateway | Master key mismatch | Ensure `LITELLM_API_KEY == LITELLM_MASTER_KEY` |
-| Chat returns null in agents | Azure key invalid / expired | Rotate in Azure Portal, update `infra/.env`, restart litellm |
-| TEI OOM on Debian | Insufficient RAM | 4 GB is comfortable for CPU voyage-4-nano; lower `--max-batch-tokens` |
-| Slow embeddings | CPU-only inference | Expected; use batching, or attach a GPU and switch TEI image tag |
+| `chat_text` returns `None` at server boot | Missing `LITELLM_API_KEY` | Set it in `.env` and restart the backend |
+| Embeddings return zero-vectors | First-run voyage weights still downloading | Wait; the smoke test at `app/smoke/gateway_smoke.py` will tell you |
+| 401 from gateway | Master-key mismatch | Ensure `LITELLM_API_KEY == LITELLM_MASTER_KEY` |
+| Chat returns null in agents | Azure key invalid / expired | Rotate in Azure Portal, update `.env`, restart litellm container |
+| Voyage local OOM | Not enough RAM | 2 GB is enough for voyage-4-nano CPU |
+| First request very slow | Cold model load | Set `EMBED_WARMUP_ON_START=true` |
 
-Health-check the stack:
+Health-check chat:
 
 ```
 curl http://localhost:4000/health/liveliness
-curl http://localhost:8080/health
+```
+
+Smoke-check both paths end-to-end:
+
+```
+cd server && uv run python -m app.smoke.gateway_smoke
 ```

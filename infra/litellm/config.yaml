@@ -1,9 +1,12 @@
 # ------------------------------------------------------------------------------
-# LiteLLM Gateway configuration.
+# LiteLLM Gateway configuration (chat only).
 #
-# All app-side code refers to model aliases:
-#   - chat-primary       → Azure OpenAI  gpt-5.4-mini-2  (fallback slot reserved)
-#   - voyage-4-nano      → local TEI container serving voyageai/voyage-4-nano
+# App-side code addresses a single model alias:
+#   - chat-primary  → Azure OpenAI  gpt-5.4-mini-2  (fallback slot reserved)
+#
+# Embeddings are NOT served through LiteLLM. The Python backend
+# (../../server) calls the voyageai[local] SDK in-process. The former
+# `voyage-4-nano` alias has been removed together with the TEI container.
 #
 # Clients authenticate with LITELLM_MASTER_KEY as Bearer token.
 # ------------------------------------------------------------------------------
@@ -28,15 +31,6 @@ model_list:
   #   litellm_params:
   #     model: openai/gpt-4o-mini
   #     api_key: os.environ/OPENAI_API_KEY
-
-  # ==== Embedding: local TEI (voyage-4-nano) ================================
-  # The TEI container exposes an OpenAI-compatible /v1/embeddings endpoint.
-  # Requests forwarded here will hit http://tei:80/v1/embeddings.
-  - model_name: voyage-4-nano
-    litellm_params:
-      model: openai/voyageai/voyage-4-nano
-      api_base: http://tei:80
-      api_key: "not-needed"
 
 router_settings:
   redis_host: redis
@@ -66,7 +60,3 @@ litellm_settings:
     port: 6379
     ttl: 3600                # 1h cache for identical requests
   # Observability (Langfuse) is intentionally NOT enabled in this phase.
-  # To enable later:
-  #   success_callback: ["langfuse"]
-  #   failure_callback: ["langfuse"]
-  # ... and add LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST env vars.
