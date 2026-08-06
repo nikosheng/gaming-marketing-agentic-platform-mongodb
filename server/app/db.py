@@ -23,9 +23,26 @@ def get_client() -> AsyncIOMotorClient:
         return _client
     if not settings.mongodb_uri:
         raise RuntimeError("Missing required env var: MONGODB_URI")
+
+    client_kwargs: dict[str, object] = {
+        "server_api": ServerApi("1", strict=False, deprecation_errors=True)
+    }
+    if settings.mongodb_tls_insecure:
+        # Convenience switch to bypass TLS certificate and hostname validation.
+        client_kwargs["tls"] = True
+        client_kwargs["tlsAllowInvalidCertificates"] = True
+        client_kwargs["tlsAllowInvalidHostnames"] = True
+    else:
+        if settings.mongodb_tls_allow_invalid_certificates:
+            client_kwargs["tls"] = True
+            client_kwargs["tlsAllowInvalidCertificates"] = True
+        if settings.mongodb_tls_allow_invalid_hostnames:
+            client_kwargs["tls"] = True
+            client_kwargs["tlsAllowInvalidHostnames"] = True
+
     _client = AsyncIOMotorClient(
         settings.mongodb_uri,
-        server_api=ServerApi("1", strict=False, deprecation_errors=True),
+        **client_kwargs,
     )
     return _client
 

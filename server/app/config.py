@@ -21,7 +21,13 @@ class LlmSettings(BaseSettings):
     is not involved for embeddings anymore.
     """
 
-    model_config = SettingsConfigDict(env_prefix="", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
 
     base_url: str = Field(default="http://localhost:4000", validation_alias="LITELLM_BASE_URL")
     api_key: str = Field(default="", validation_alias="LITELLM_API_KEY")
@@ -44,6 +50,15 @@ class Settings(BaseSettings):
 
     mongodb_uri: str | None = Field(default=None, validation_alias="MONGODB_URI")
     database_name: str = Field(default="casino_marketing_demo", validation_alias="MONGODB_DB")
+    mongodb_tls_insecure: bool = Field(
+        default=False, validation_alias="MONGODB_TLS_INSECURE"
+    )
+    mongodb_tls_allow_invalid_certificates: bool = Field(
+        default=False, validation_alias="MONGODB_TLS_ALLOW_INVALID_CERTIFICATES"
+    )
+    mongodb_tls_allow_invalid_hostnames: bool = Field(
+        default=False, validation_alias="MONGODB_TLS_ALLOW_INVALID_HOSTNAMES"
+    )
 
     vector_embedding_dim: int = Field(default=1024, validation_alias="VECTOR_EMBEDDING_DIM")
     seed_patron_count: int = Field(default=300, validation_alias="SEED_PATRON_COUNT")

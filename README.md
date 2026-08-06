@@ -191,6 +191,9 @@ cp .env.example .env
 | `NEXT_PUBLIC_BACKEND_URL` | No | Frontend proxy target for `/api/*` (default: `http://localhost:8000`) |
 | `MONGODB_URI` | Yes | MongoDB Atlas connection string |
 | `MONGODB_DB` | No | Database name (default: `casino_marketing_demo`) |
+| `MONGODB_TLS_INSECURE` | No | If `true`, disables TLS cert + hostname verification for Mongo (dev-only; default: `false`) |
+| `MONGODB_TLS_ALLOW_INVALID_CERTIFICATES` | No | If `true`, disables Mongo TLS cert verification only (default: `false`) |
+| `MONGODB_TLS_ALLOW_INVALID_HOSTNAMES` | No | If `true`, disables Mongo TLS hostname verification only (default: `false`) |
 | `LITELLM_BASE_URL` | Yes* | LiteLLM gateway URL (default: `http://localhost:4000`) |
 | `LITELLM_API_KEY` | Yes* | LiteLLM master key (Bearer token; must match `LITELLM_MASTER_KEY` in `infra/.env`) |
 | `LLM_CHAT_MODEL` | No | Chat model alias in LiteLLM (default: `chat-primary`) |
