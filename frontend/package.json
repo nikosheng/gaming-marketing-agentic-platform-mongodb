@@ -7,10 +7,7 @@
     "build": "next build",
     "start": "next start",
     "check": "tsc --noEmit",
-    "stop": "kill-port 3000",
-    "llm:up": "docker compose -f infra/docker-compose.yml up -d",
-    "llm:down": "docker compose -f infra/docker-compose.yml down",
-    "llm:logs": "docker compose -f infra/docker-compose.yml logs -f"
+    "stop": "kill-port 3000"
   },
   "keywords": [],
   "author": "",

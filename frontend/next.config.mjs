@@ -13,6 +13,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Required for the multi-stage Docker standalone build (copies only the
+  // minimal server runtime into .next/standalone — no node_modules needed
+  // in the production container).
+  output: "standalone",
   async rewrites() {
     const backend =
       process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
