@@ -120,7 +120,7 @@ db.patron_table_sessions.updateOne(
 
 ## How the Heatmap Consumes This Data
 
-The platform runs the following aggregation against `patron_table_sessions` on every heatmap refresh (every 60 seconds):
+The platform runs the following aggregation against `patron_table_sessions` on every heatmap refresh (every 5 seconds):
 
 ```js
 db.patron_table_sessions.aggregate([

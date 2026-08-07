@@ -887,7 +887,7 @@ export default function DashboardClient() {
 
     fetchHeatmap().catch((err) => setError((err as Error).message));
     fetchOffers().catch((err) => setError((err as Error).message));
-    const interval = window.setInterval(fetchHeatmap, 60000);
+    const interval = window.setInterval(fetchHeatmap, 5000);
     return () => window.clearInterval(interval);
   }, [selectedTableId]);
 
@@ -1889,7 +1889,7 @@ export default function DashboardClient() {
                     </div>
                     <div className="heatmap-stat-tile">
                       <span className="heatmap-stat-label">Status</span>
-                      <span className="heatmap-stat-live">Live · 1m refresh</span>
+                      <span className="heatmap-stat-live">Live · 5s refresh</span>
                     </div>
                   </div>
                 );
