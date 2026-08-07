@@ -273,6 +273,115 @@ body {
   opacity: 1;
 }
 
+/* --- Occupancy-based card background tints --- */
+.table-btn.occ-high {
+  background: linear-gradient(180deg, #1e1220 0%, #110d18 100%);
+  border-color: rgba(255, 82, 109, 0.45);
+}
+
+.table-btn.occ-high:hover {
+  border-color: rgba(255, 82, 109, 0.70);
+  box-shadow: 0 10px 28px rgba(8, 16, 32, 0.45), 0 0 0 1px rgba(255, 82, 109, 0.25);
+}
+
+.table-btn.occ-medium {
+  background: linear-gradient(180deg, #1c1710 0%, #10110a 100%);
+  border-color: rgba(255, 170, 51, 0.38);
+}
+
+.table-btn.occ-medium:hover {
+  border-color: rgba(255, 170, 51, 0.62);
+  box-shadow: 0 10px 28px rgba(8, 16, 32, 0.45), 0 0 0 1px rgba(255, 170, 51, 0.20);
+}
+
+.table-btn.occ-low {
+  background: linear-gradient(180deg, #142039 0%, #0f1a2f 100%);
+  border-color: #2d3f64;
+}
+
+/* active state always overrides occupancy tint */
+.table-btn.active.occ-high,
+.table-btn.active.occ-medium,
+.table-btn.active.occ-low {
+  border-color: #75a4ff;
+  background: linear-gradient(180deg, #1c2a4a 0%, #11203c 100%);
+}
+
+/* --- Heatmap Stats Bar --- */
+.heatmap-stats-bar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 10px 0 14px;
+}
+
+.heatmap-stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: #19253b;
+  border: 1px solid #2d3f64;
+  border-radius: 10px;
+  padding: 8px 14px;
+  min-width: 110px;
+  flex: 1 1 auto;
+}
+
+.heatmap-stat-label {
+  font-size: 0.68rem;
+  color: #7a90b4;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.heatmap-stat-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.18rem;
+  font-weight: 700;
+  color: #e6edf7;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+
+.heatmap-stat-value.accent-red   { color: #ff8fa0; }
+.heatmap-stat-value.accent-amber { color: #ffc875; }
+.heatmap-stat-value.accent-green { color: #6ee9b8; }
+.heatmap-stat-value.accent-blue  { color: #89b8ff; }
+
+.heatmap-stat-sub {
+  font-size: 0.72rem;
+  color: #9db0ca;
+  line-height: 1.4;
+  margin-top: 1px;
+}
+
+.heatmap-stat-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  color: #6ee9b8;
+  font-weight: 600;
+}
+
+.heatmap-stat-live::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #1fd693;
+  box-shadow: 0 0 6px rgba(31, 214, 147, 0.75);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.55; transform: scale(0.8); }
+}
+
 .table-head {
   display: flex;
   justify-content: space-between;
