@@ -8,7 +8,7 @@
 
 ## Overview
 
-The goal of this integration is to stream live seat-tracking and betting data from an external floor management or POS system into MongoDB. Once data lands in the target collection, the platform's heatmap automatically reflects the updated occupancy, patron counts, and average bet amounts on the next poll cycle (every 60 seconds).
+The goal of this integration is to stream live seat-tracking and betting data from an external floor management or POS system into MongoDB. Once data lands in the target collection, the platform's heatmap automatically reflects the updated occupancy, patron counts, and average bet amounts on the next poll cycle (every 5 seconds).
 
 No backend code changes are required. The heatmap reads directly from MongoDB at runtime.
 
@@ -238,7 +238,7 @@ mongodb://localhost:27017/casino_marketing_demo?replicaSet=rs0&directConnection=
 
 1. ETL tool connects to MongoDB using the connection string above.
 2. ETL streams floor events and upserts documents into `patron_table_sessions`.
-3. Platform heatmap polls `GET /api/tables/heatmap` every 60 seconds (or on page load).
+3. Platform heatmap polls `GET /api/tables/heatmap` every 5 seconds (or on page load).
 4. Heatmap aggregates live sessions, computes `patronCount`, `avgBetAmount`, and `occupancyRate` per table.
 5. Dashboard renders updated table cards with occupancy-tinted backgrounds and refreshed Stats Bar tiles (Total Patrons, Top 3 Tables, Hottest Zone).
 

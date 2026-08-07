@@ -1861,16 +1861,28 @@ export default function DashboardClient() {
                         {heatmap?.metrics.totalPatrons ?? "-"}
                       </span>
                     </div>
-                    <div className="heatmap-stat-tile" style={{ minWidth: 160 }}>
+                    <div className="heatmap-stat-tile top3-tile">
                       <span className="heatmap-stat-label">Top 3 Tables</span>
                       {top3.length > 0 ? (
-                        <div className="heatmap-stat-sub">
-                          {top3.map((t) => (
-                            <div key={t.tableId}>
-                              <span style={{ color: "#e6edf7", fontWeight: 600 }}>{t.tableName}</span>
-                              <span style={{ color: "#7a90b4" }}> · {t.patronCount} patrons</span>
-                            </div>
-                          ))}
+                        <div className="top3-leaderboard">
+                          {top3.map((t, i) => {
+                            const maxCount = top3[0].patronCount || 1;
+                            const pct = Math.round((t.patronCount / maxCount) * 100);
+                            return (
+                              <div key={t.tableId} className={`top3-row top3-rank-${i + 1}`}>
+                                <span className="top3-rank-badge">#{i + 1}</span>
+                                <div className="top3-info">
+                                  <div className="top3-name-row">
+                                    <span className="top3-name">{t.tableName}</span>
+                                    <span className="top3-count">{t.patronCount}</span>
+                                  </div>
+                                  <div className="top3-bar-wrap">
+                                    <div className="top3-bar-fill" style={{ width: `${pct}%` }} />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : (
                         <span className="heatmap-stat-value">-</span>

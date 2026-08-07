@@ -15,7 +15,7 @@ WORKDIR /app
 
 # Copy dependency manifests first for better layer caching.
 # uv.lock guarantees a fully reproducible install.
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 
 # Install runtime dependencies only (skip dev extras).
 # --no-install-project: don't install the project itself yet (source not copied).
