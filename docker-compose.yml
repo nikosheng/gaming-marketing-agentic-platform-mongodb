@@ -37,22 +37,22 @@ services:
   # Runs a single-node replica set that supports Atlas-specific features
   # including $vectorSearch, Atlas Search, and triggers.
   # ---------------------------------------------------------------------------
-  mongodb:
-    image: mongodb/mongodb-atlas-local:latest
-    container_name: mgm-mongodb
-    restart: unless-stopped
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo-data:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping').ok", "--quiet"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-    networks:
-      - app-net
+  # mongodb:
+  #   image: mongodb/mongodb-atlas-local:latest
+  #   container_name: mgm-mongodb
+  #   restart: unless-stopped
+  #   ports:
+  #     - "27017:27017"
+  #   volumes:
+  #     - mongo-data:/data/db
+  #   healthcheck:
+  #     test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping').ok", "--quiet"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 10
+  #     start_period: 30s
+  #   networks:
+  #     - app-net
 
   # ---------------------------------------------------------------------------
   # Redis — LiteLLM response cache + routing state
@@ -123,17 +123,13 @@ services:
     container_name: mgm-backend
     restart: unless-stopped
     depends_on:
-      mongodb:
-        condition: service_healthy
       litellm:
         condition: service_healthy
     ports:
       - "8000:8000"
     env_file: .env
     environment:
-      # Override the Atlas cloud URI from .env with the local container URI.
-      # directConnection=true is required for Atlas Local's single-node replica set.
-      MONGODB_URI: mongodb://mongodb:27017/?directConnection=true
+      MONGODB_URI: mongodb+srv://dbuser:Tsadmin123456@mongodb-tapdata.e1pdtmf.mongodb.net/
       # Override localhost references with Docker service names.
       LITELLM_BASE_URL: http://litellm:4000
     volumes:
@@ -152,6 +148,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_BACKEND_URL: http://backend:8000
     container_name: mgm-frontend
     restart: unless-stopped
     depends_on:

@@ -19,6 +19,10 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Ensure Next.js build-time rewrites resolve to the backend service in Docker.
+ARG NEXT_PUBLIC_BACKEND_URL=http://backend:8000
+ENV NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL}
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
@@ -40,8 +44,6 @@ RUN addgroup -S nodejs && adduser -S nextjs -G nodejs
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 # Static assets must be copied separately
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-# public/ is served as-is by the standalone server
-COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
 USER nextjs
 

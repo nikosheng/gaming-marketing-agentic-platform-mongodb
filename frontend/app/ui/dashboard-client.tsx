@@ -887,7 +887,7 @@ export default function DashboardClient() {
 
     fetchHeatmap().catch((err) => setError((err as Error).message));
     fetchOffers().catch((err) => setError((err as Error).message));
-    const interval = window.setInterval(fetchHeatmap, 60000);
+    const interval = window.setInterval(fetchHeatmap, 5000);
     return () => window.clearInterval(interval);
   }, [selectedTableId]);
 
@@ -1836,16 +1836,81 @@ export default function DashboardClient() {
           <div className="section-stack">
             <article className="panel-card">
               <h2 className="panel-title">Table Heatmap</h2>
-              <div className="metric-row">
-                <span className="metric-chip">Hot {heatmap?.metrics.hotTables ?? "-"}</span>
-                <span className="metric-chip">Open/Busy {heatmap?.metrics.openOrBusyTables ?? "-"}</span>
-                <span className="metric-chip">Refresh 1m</span>
-              </div>
+              {/* === Heatmap Stats Bar === */}
+              {(() => {
+                const tables = heatmap?.tables ?? [];
+                const top3 = [...tables]
+                  .sort((a, b) => b.patronCount - a.patronCount)
+                  .slice(0, 3);
+                const zoneMap: Record<string, number> = {};
+                for (const t of tables) {
+                  zoneMap[t.zone] = (zoneMap[t.zone] ?? 0) + t.patronCount;
+                }
+                const hottestZone = Object.entries(zoneMap).sort((a, b) => b[1] - a[1])[0];
+                return (
+                  <div className="heatmap-stats-bar">
+                    <div className="heatmap-stat-tile">
+                      <span className="heatmap-stat-label">Total Tables</span>
+                      <span className="heatmap-stat-value accent-blue">
+                        {heatmap?.metrics.totalTables ?? "-"}
+                      </span>
+                    </div>
+                    <div className="heatmap-stat-tile">
+                      <span className="heatmap-stat-label">Total Patrons</span>
+                      <span className="heatmap-stat-value accent-green">
+                        {heatmap?.metrics.totalPatrons ?? "-"}
+                      </span>
+                    </div>
+                    <div className="heatmap-stat-tile top3-tile">
+                      <span className="heatmap-stat-label">Top 3 Tables</span>
+                      {top3.length > 0 ? (
+                        <div className="top3-leaderboard">
+                          {top3.map((t, i) => {
+                            const maxCount = top3[0].patronCount || 1;
+                            const pct = Math.round((t.patronCount / maxCount) * 100);
+                            return (
+                              <div key={t.tableId} className={`top3-row top3-rank-${i + 1}`}>
+                                <span className="top3-rank-badge">#{i + 1}</span>
+                                <div className="top3-info">
+                                  <div className="top3-name-row">
+                                    <span className="top3-name">{t.tableName}</span>
+                                    <span className="top3-count">{t.patronCount}</span>
+                                  </div>
+                                  <div className="top3-bar-wrap">
+                                    <div className="top3-bar-fill" style={{ width: `${pct}%` }} />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <span className="heatmap-stat-value">-</span>
+                      )}
+                    </div>
+                    <div className="heatmap-stat-tile">
+                      <span className="heatmap-stat-label">Hottest Zone</span>
+                      {hottestZone ? (
+                        <>
+                          <span className="heatmap-stat-value accent-red">Zone {hottestZone[0]}</span>
+                          <span className="heatmap-stat-sub">{hottestZone[1]} patrons</span>
+                        </>
+                      ) : (
+                        <span className="heatmap-stat-value">-</span>
+                      )}
+                    </div>
+                    <div className="heatmap-stat-tile">
+                      <span className="heatmap-stat-label">Status</span>
+                      <span className="heatmap-stat-live">Live · 5s refresh</span>
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="tables">
                 {(heatmap?.tables ?? []).map((table) => (
                   <button
                     key={table.tableId}
-                    className={`table-btn ${selectedTableId === table.tableId ? "active" : ""}`}
+                    className={`table-btn ${selectedTableId === table.tableId ? "active" : ""} ${table.occupancyRate >= 0.8 ? "occ-high" : table.occupancyRate >= 0.5 ? "occ-medium" : "occ-low"}`}
                     onClick={() => {
                       setSelectedTableId(table.tableId);
                       setDrillDrawerOpen(true);
