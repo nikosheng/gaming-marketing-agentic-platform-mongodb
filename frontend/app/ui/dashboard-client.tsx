@@ -294,7 +294,51 @@ type SimulateResponse = {
   error?: string;
 };
 
-type ConsoleSection = "patron-eyes" | "offer-catalog" | "patron-insight" | "alert-dashboard" | "pr-efficiency";
+type ConsoleSection = "patron-eyes" | "offer-catalog" | "patron-insight" | "alert-dashboard" | "pr-efficiency" | "simulate";
+
+// ---------- Simulate tab types ----------
+
+type SimTablePatron = {
+  patronId: string;
+  tableId: string;
+  seatedAt: string;
+  lastActionAt: string;
+  sessionBetAmount: number;
+  currentStackEstimate: number;
+  behaviorTags: string[];
+  isActive: boolean;
+  name?: string;
+  maskedName?: string;
+  tier?: string;
+};
+
+type SimHistory = {
+  patronId: string;
+  tableId: string;
+  tableName: string;
+  sessionBetAmount: number;
+  currentStackEstimate: number;
+  behaviorTags: string[];
+  isActive: boolean;
+  action: "inserted" | "updated";
+  updatedAt: string;
+  mode: "update" | "new";
+};
+
+type SimGenPreview = {
+  patronId: string;
+  sessionBetAmount: number;
+  currentStackEstimate: number;
+  behaviorTags: string[];
+};
+
+const SIM_BEHAVIOR_TAGS = [
+  "Aggressive",
+  "Conservative",
+  "PromoSeeker",
+  "LateNight",
+  "CardCounterWatch",
+] as const;
 
 // ---------- PR Efficiency types ----------
 
@@ -561,6 +605,16 @@ function SectionIcon({ section }: { section: ConsoleSection }) {
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path
           d="M9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4zM5 19h14a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1zm-3 2V6a3 3 0 0 1 3-3h14a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z"
+          fill="currentColor"
+        />
+      </svg>
+    );
+  }
+  if (section === "simulate") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 14.93V15a1 1 0 0 0-2 0v1.93A8 8 0 0 1 4.07 11H6a1 1 0 0 0 0-2H4.07A8 8 0 0 1 11 4.07V6a1 1 0 0 0 2 0V4.07A8 8 0 0 1 19.93 11H18a1 1 0 0 0 0 2h1.93A8 8 0 0 1 13 16.93zM12 10a2 2 0 1 0 2 2 2 2 0 0 0-2-2z"
           fill="currentColor"
         />
       </svg>
@@ -866,6 +920,21 @@ export default function DashboardClient() {
   const [kpiSearching, setKpiSearching] = useState<boolean>(false);
   const [kpiResult, setKpiResult] = useState<KpiSearchResult | null>(null);
   const [kpiError, setKpiError] = useState<string>("");
+  // ---------- Simulate tab state ----------
+  const [simMode, setSimMode] = useState<"update" | "new">("update");
+  const [simTableId, setSimTableId] = useState<string>("");
+  const [simTablePatrons, setSimTablePatrons] = useState<SimTablePatron[]>([]);
+  const [simPatronsLoading, setSimPatronsLoading] = useState<boolean>(false);
+  const [simPatronId, setSimPatronId] = useState<string>("");
+  const [simBetAmount, setSimBetAmount] = useState<string>("");
+  const [simStackEstimate, setSimStackEstimate] = useState<string>("");
+  const [simBehaviorTags, setSimBehaviorTags] = useState<string[]>([]);
+  const [simIsActive, setSimIsActive] = useState<boolean>(true);
+  const [simGenPreview, setSimGenPreview] = useState<SimGenPreview | null>(null);
+  const [simUpsertLoading, setSimUpsertLoading] = useState<boolean>(false);
+  const [simError, setSimError] = useState<string>("");
+  const [simSuccess, setSimSuccess] = useState<string>("");
+  const [simHistory, setSimHistory] = useState<SimHistory[]>([]);
 
   useEffect(() => {
     async function fetchHeatmap() {
@@ -937,6 +1006,31 @@ export default function DashboardClient() {
       .catch(() => undefined)
       .finally(() => setPrMetricsLoading(false));
   }, [activeSection]);
+
+  // Fetch active patrons for the selected simulate table
+  useEffect(() => {
+    if (!simTableId) {
+      setSimTablePatrons([]);
+      setSimPatronId("");
+      setSimGenPreview(null);
+      return;
+    }
+    setSimPatronsLoading(true);
+    setSimPatronId("");
+    setSimBetAmount("");
+    setSimStackEstimate("");
+    setSimBehaviorTags([]);
+    setSimGenPreview(null);
+    setSimError("");
+    setSimSuccess("");
+    fetch(`/api/simulate/tables/${simTableId}/patrons`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((data: { ok: boolean; patrons?: SimTablePatron[] }) => {
+        if (data.ok) setSimTablePatrons(data.patrons ?? []);
+      })
+      .catch(() => undefined)
+      .finally(() => setSimPatronsLoading(false));
+  }, [simTableId]);
 
   useEffect(() => {
     if (!selectedTableId) return;
@@ -1735,6 +1829,121 @@ export default function DashboardClient() {
     }
   }
 
+  function generateSimPatron(tableMinBet: number): SimGenPreview {
+    // patronId follows the same P-{6-digit} format as seed data,
+    // but uses range 900001–999999 to avoid colliding with seeded patrons (max 300).
+    const randId = 900001 + Math.floor(Math.random() * 99999);
+    const patronId = `P-${String(randId).padStart(6, "0")}`;
+    const multiplier = 3 + Math.floor(Math.random() * 12); // 3–14
+    const sessionBetAmount = tableMinBet * multiplier;
+    const stackMultiplier = 2 + Math.floor(Math.random() * 7); // 2–8
+    const currentStackEstimate = sessionBetAmount * stackMultiplier;
+    const allTags = [...SIM_BEHAVIOR_TAGS];
+    // shuffle and pick 1–2
+    for (let i = allTags.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [allTags[i], allTags[j]] = [allTags[j], allTags[i]];
+    }
+    const tagCount = 1 + Math.floor(Math.random() * 2); // 1 or 2
+    const behaviorTags = allTags.slice(0, tagCount);
+    return { patronId, sessionBetAmount, currentStackEstimate, behaviorTags };
+  }
+
+  function onSimGenerate() {
+    const table = heatmap?.tables.find((t) => t.tableId === simTableId);
+    const minBet = table?.minBet ?? 300;
+    setSimGenPreview(generateSimPatron(minBet));
+    setSimError("");
+    setSimSuccess("");
+  }
+
+  async function onSimUpsert() {
+    if (!simTableId) return;
+
+    // Determine which values to use based on mode
+    let patronId: string;
+    let betAmt: number;
+    let stackEst: number;
+    let behaviorTags: string[];
+    let isActive: boolean;
+
+    if (simMode === "new") {
+      if (!simGenPreview) return;
+      patronId = simGenPreview.patronId;
+      betAmt = simGenPreview.sessionBetAmount;
+      stackEst = simGenPreview.currentStackEstimate;
+      behaviorTags = simGenPreview.behaviorTags;
+      isActive = true;
+    } else {
+      if (!simPatronId) return;
+      betAmt = parseFloat(simBetAmount);
+      stackEst = parseFloat(simStackEstimate);
+      if (isNaN(betAmt) || isNaN(stackEst)) {
+        setSimError("Please enter valid numeric values for Bet Amount and Stack Estimate.");
+        return;
+      }
+      patronId = simPatronId;
+      behaviorTags = simBehaviorTags;
+      isActive = simIsActive;
+    }
+
+    setSimUpsertLoading(true);
+    setSimError("");
+    setSimSuccess("");
+    try {
+      const res = await fetch("/api/simulate/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patronId,
+          tableId: simTableId,
+          sessionBetAmount: betAmt,
+          currentStackEstimate: stackEst,
+          behaviorTags,
+          isActive,
+        }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        action?: string;
+        updatedAt?: string;
+        error?: string;
+      };
+      if (!data.ok) {
+        setSimError(data.error ?? "Upsert failed.");
+        return;
+      }
+      const tableName = heatmap?.tables.find((t) => t.tableId === simTableId)?.tableName ?? simTableId;
+      const newEntry: SimHistory = {
+        patronId,
+        tableId: simTableId,
+        tableName,
+        sessionBetAmount: betAmt,
+        currentStackEstimate: stackEst,
+        behaviorTags,
+        isActive,
+        action: (data.action ?? "updated") as "inserted" | "updated",
+        updatedAt: data.updatedAt ?? new Date().toISOString(),
+        mode: simMode,
+      };
+      setSimHistory((prev) => [newEntry, ...prev].slice(0, 5));
+      setSimSuccess(`Session ${data.action === "inserted" ? "inserted" : "updated"} — ${patronId} at ${tableName}.`);
+      // In "new" mode, reset preview so user must generate again
+      if (simMode === "new") setSimGenPreview(null);
+      // Refresh the patrons list for this table
+      fetch(`/api/simulate/tables/${simTableId}/patrons`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((d: { ok: boolean; patrons?: SimTablePatron[] }) => {
+          if (d.ok) setSimTablePatrons(d.patrons ?? []);
+        })
+        .catch(() => undefined);
+    } catch (err) {
+      setSimError((err as Error).message);
+    } finally {
+      setSimUpsertLoading(false);
+    }
+  }
+
   return (
     <main className="modern-page console-layout">
       <aside className="console-sidebar">
@@ -1799,6 +2008,16 @@ export default function DashboardClient() {
           </span>
           <span>PR Efficiency</span>
         </button>
+        <button
+          className={`console-nav-btn ${activeSection === "simulate" ? "active" : ""}`}
+          onClick={() => setActiveSection("simulate")}
+          type="button"
+        >
+          <span className="console-nav-icon">
+            <SectionIcon section="simulate" />
+          </span>
+          <span>Simulate</span>
+        </button>
       </aside>
 
       <section className="console-content">
@@ -1811,7 +2030,9 @@ export default function DashboardClient() {
                   ? "Alert Dashboard"
                   : activeSection === "pr-efficiency"
                     ? "PR Efficiency"
-                    : "Offer Catalog"}
+                    : activeSection === "simulate"
+                      ? "Simulate"
+                      : "Offer Catalog"}
             </h2>
             <p className="hero-subtitle">
               {activeSection === "patron-eyes"
@@ -1820,7 +2041,9 @@ export default function DashboardClient() {
                   ? "Define high-value patron rules in natural language. Simulate betting rounds and receive instant AI-powered alerts."
                   : activeSection === "pr-efficiency"
                     ? "Track PR interaction metrics and run KPI vector search to evaluate performance across all agents."
-                    : "Manage promotion inventory, run quick lookups, and generate strategy-ready offers with AI support."}
+                    : activeSection === "simulate"
+                      ? "Simulate real-time patron session upserts into patron_table_sessions to test live heatmap updates in Patron Eyes."
+                      : "Manage promotion inventory, run quick lookups, and generate strategy-ready offers with AI support."}
             </p>
           </div>
           <div className="hero-metrics">
@@ -3758,6 +3981,351 @@ export default function DashboardClient() {
                 </div>
               ) : null}
             </article>
+
+          </div>
+        ) : null}
+
+        {activeSection === "simulate" ? (
+          <div className="section-stack">
+            <article className="panel-card sim-panel">
+              <h2 className="panel-title">Simulate Patron Session</h2>
+              <p className="sim-panel-desc">
+                Write to <code>patron_table_sessions</code> to test live heatmap updates in Patron Eyes. Changes reflect within 5 seconds.
+              </p>
+
+              {/* Step 1: Select Table */}
+              <div className="sim-step">
+                <div className="sim-step-header">
+                  <span className="sim-step-number">1</span>
+                  <span className="sim-step-label">Select Table</span>
+                </div>
+                <select
+                  className="sim-select"
+                  value={simTableId}
+                  onChange={(e) => setSimTableId(e.target.value)}
+                >
+                  <option value="">— Choose a table —</option>
+                  {(heatmap?.tables ?? []).map((t) => (
+                    <option key={t.tableId} value={t.tableId}>
+                      {t.tableName} · {t.gameType} · Zone {t.zone} · {t.patronCount} patron{t.patronCount !== 1 ? "s" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Mode Tab Switcher */}
+              <div className={`sim-mode-tabs ${!simTableId ? "sim-step-disabled" : ""}`}>
+                <button
+                  type="button"
+                  className={`sim-mode-tab ${simMode === "update" ? "active" : ""}`}
+                  onClick={() => {
+                    setSimMode("update");
+                    setSimGenPreview(null);
+                    setSimError("");
+                    setSimSuccess("");
+                  }}
+                >
+                  Update Existing Patron
+                </button>
+                <button
+                  type="button"
+                  className={`sim-mode-tab ${simMode === "new" ? "active" : ""}`}
+                  onClick={() => {
+                    setSimMode("new");
+                    setSimError("");
+                    setSimSuccess("");
+                  }}
+                >
+                  Add New Patron
+                </button>
+              </div>
+
+              {/* ── Update Existing Patron ── */}
+              {simMode === "update" ? (
+                <>
+                  {/* Step 2: Select Patron */}
+                  <div className={`sim-step ${!simTableId ? "sim-step-disabled" : ""}`}>
+                    <div className="sim-step-header">
+                      <span className="sim-step-number">2</span>
+                      <span className="sim-step-label">Select Patron at Table</span>
+                      {simTableId && (
+                        <span className="sim-step-badge">
+                          {simPatronsLoading ? "Loading…" : `${simTablePatrons.length} active`}
+                        </span>
+                      )}
+                    </div>
+                    <select
+                      className="sim-select"
+                      value={simPatronId}
+                      disabled={!simTableId || simPatronsLoading}
+                      onChange={(e) => {
+                        const pid = e.target.value;
+                        setSimPatronId(pid);
+                        const found = simTablePatrons.find((p) => p.patronId === pid);
+                        if (found) {
+                          setSimBetAmount(String(found.sessionBetAmount));
+                          setSimStackEstimate(String(found.currentStackEstimate));
+                          setSimBehaviorTags(found.behaviorTags ?? []);
+                          setSimIsActive(found.isActive);
+                        }
+                      }}
+                    >
+                      <option value="">— Choose a patron —</option>
+                      {simTablePatrons.map((p) => (
+                        <option key={p.patronId} value={p.patronId}>
+                          {p.patronId}{p.maskedName ? ` · ${p.maskedName}` : ""}{p.tier ? ` · ${p.tier}` : ""} · HKD {p.sessionBetAmount.toLocaleString()}
+                        </option>
+                      ))}
+                    </select>
+                    {simTableId && !simPatronsLoading && simTablePatrons.length === 0 ? (
+                      <p className="sim-empty-hint">No active patrons at this table. Switch to Add New Patron to seat one.</p>
+                    ) : null}
+                  </div>
+
+                  {/* Step 3: Session Parameters */}
+                  <div className={`sim-step ${!simPatronId ? "sim-step-disabled" : ""}`}>
+                    <div className="sim-step-header">
+                      <span className="sim-step-number">3</span>
+                      <span className="sim-step-label">Edit Session Parameters</span>
+                    </div>
+                    <div className="sim-form-grid">
+                      <div className="sim-form-row">
+                        <label className="sim-label" htmlFor="sim-bet-amount">Bet Amount (HKD)</label>
+                        <input
+                          id="sim-bet-amount"
+                          className="sim-input"
+                          type="number"
+                          min={0}
+                          placeholder="e.g. 8000"
+                          value={simBetAmount}
+                          onChange={(e) => setSimBetAmount(e.target.value)}
+                          disabled={!simPatronId}
+                        />
+                        <span className="sim-input-hint">Cumulative session bet amount</span>
+                      </div>
+                      <div className="sim-form-row">
+                        <label className="sim-label" htmlFor="sim-stack">Stack Estimate (HKD)</label>
+                        <input
+                          id="sim-stack"
+                          className="sim-input"
+                          type="number"
+                          min={0}
+                          placeholder="e.g. 25000"
+                          value={simStackEstimate}
+                          onChange={(e) => setSimStackEstimate(e.target.value)}
+                          disabled={!simPatronId}
+                        />
+                        <span className="sim-input-hint">Current chip stack estimate</span>
+                      </div>
+                      <div className="sim-form-row sim-form-row-full">
+                        <label className="sim-label">Behavior Tags</label>
+                        <div className="sim-tag-group">
+                          {SIM_BEHAVIOR_TAGS.map((tag) => (
+                            <button
+                              key={tag}
+                              type="button"
+                              className={`sim-tag-chip ${simBehaviorTags.includes(tag) ? "active" : ""}`}
+                              disabled={!simPatronId}
+                              onClick={() =>
+                                setSimBehaviorTags((prev) =>
+                                  prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+                                )
+                              }
+                            >
+                              {tag}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="sim-form-row sim-form-row-full">
+                        <label className="sim-label">Session Status</label>
+                        <div className="sim-radio-group">
+                          <label className="sim-radio-label">
+                            <input
+                              type="radio"
+                              name="sim-is-active"
+                              checked={simIsActive}
+                              onChange={() => setSimIsActive(true)}
+                              disabled={!simPatronId}
+                            />
+                            <span className="sim-radio-text active-dot">Active</span>
+                            <span className="sim-radio-hint">Patron appears on heatmap</span>
+                          </label>
+                          <label className="sim-radio-label">
+                            <input
+                              type="radio"
+                              name="sim-is-active"
+                              checked={!simIsActive}
+                              onChange={() => setSimIsActive(false)}
+                              disabled={!simPatronId}
+                            />
+                            <span className="sim-radio-text">Inactive</span>
+                            <span className="sim-radio-hint">Removed from heatmap on next poll</span>
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Feedback */}
+                  {simError ? <div className="sim-feedback sim-feedback-error">{simError}</div> : null}
+                  {simSuccess ? <div className="sim-feedback sim-feedback-success">{simSuccess}</div> : null}
+
+                  {/* CTA */}
+                  <div className="sim-cta-row">
+                    <button
+                      className="button sim-upsert-btn"
+                      type="button"
+                      disabled={!simTableId || !simPatronId || !simBetAmount || !simStackEstimate || simUpsertLoading}
+                      onClick={() => onSimUpsert().catch(() => undefined)}
+                    >
+                      {simUpsertLoading ? "Updating…" : "Update Session"}
+                    </button>
+                    <span className="sim-cta-hint">
+                      Writes to <code>patron_table_sessions</code> · Patron Eyes refreshes in ~5s
+                    </span>
+                  </div>
+                </>
+              ) : null}
+
+              {/* ── Add New Patron ── */}
+              {simMode === "new" ? (
+                <>
+                  <div className={`sim-step ${!simTableId ? "sim-step-disabled" : ""}`}>
+                    <div className="sim-step-header">
+                      <span className="sim-step-number">2</span>
+                      <span className="sim-step-label">Auto-generate Patron Data</span>
+                    </div>
+                    <p className="sim-gen-desc">
+                      The system will generate a new patron ID in the standard <code>P-{"{XXXXXX}"}</code> format and randomise session data based on this table&apos;s minimum bet.
+                    </p>
+
+                    {/* Preview card */}
+                    {simGenPreview ? (
+                      <div className="sim-gen-preview-card">
+                        <div className="sim-gen-preview-header">
+                          <span className="sim-gen-preview-title">Generated Patron Preview</span>
+                          <span className="sim-gen-live-dot" />
+                        </div>
+                        <div className="sim-gen-preview-grid">
+                          <div className="sim-gen-preview-row">
+                            <span className="sim-gen-preview-label">Patron ID</span>
+                            <span className="sim-gen-preview-value id">{simGenPreview.patronId}</span>
+                          </div>
+                          <div className="sim-gen-preview-row">
+                            <span className="sim-gen-preview-label">Table</span>
+                            <span className="sim-gen-preview-value">
+                              {heatmap?.tables.find((t) => t.tableId === simTableId)?.tableName ?? simTableId}
+                            </span>
+                          </div>
+                          <div className="sim-gen-preview-row">
+                            <span className="sim-gen-preview-label">Bet Amount</span>
+                            <span className="sim-gen-preview-value accent">
+                              HKD {simGenPreview.sessionBetAmount.toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="sim-gen-preview-row">
+                            <span className="sim-gen-preview-label">Stack Estimate</span>
+                            <span className="sim-gen-preview-value accent">
+                              HKD {simGenPreview.currentStackEstimate.toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="sim-gen-preview-row">
+                            <span className="sim-gen-preview-label">Behavior Tags</span>
+                            <div className="sim-gen-preview-tags">
+                              {simGenPreview.behaviorTags.map((tag) => (
+                                <span key={tag} className="sim-gen-tag">{tag}</span>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="sim-gen-preview-row">
+                            <span className="sim-gen-preview-label">Status</span>
+                            <span className="sim-gen-preview-value status-active">Active</span>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="sim-gen-empty">
+                        Click <strong>Generate Patron Data</strong> to create a randomised patron session ready to insert.
+                      </div>
+                    )}
+
+                    {/* Feedback */}
+                    {simError ? <div className="sim-feedback sim-feedback-error">{simError}</div> : null}
+                    {simSuccess ? <div className="sim-feedback sim-feedback-success">{simSuccess}</div> : null}
+
+                    {/* CTA buttons */}
+                    <div className="sim-gen-btn-row">
+                      <button
+                        type="button"
+                        className="sim-gen-btn"
+                        disabled={!simTableId}
+                        onClick={onSimGenerate}
+                      >
+                        {simGenPreview ? "Regenerate" : "Generate Patron Data"}
+                      </button>
+                      {simGenPreview ? (
+                        <button
+                          type="button"
+                          className="button sim-upsert-btn"
+                          disabled={simUpsertLoading}
+                          onClick={() => onSimUpsert().catch(() => undefined)}
+                        >
+                          {simUpsertLoading ? "Inserting…" : "Insert Session"}
+                        </button>
+                      ) : null}
+                    </div>
+                    <span className="sim-cta-hint">
+                      Writes to <code>patron_table_sessions</code> · Patron Eyes refreshes in ~5s
+                    </span>
+                  </div>
+                </>
+              ) : null}
+
+            </article>
+
+            {/* Recent Simulations */}
+            {simHistory.length > 0 ? (
+              <article className="panel-card">
+                <h2 className="panel-title">Recent Simulations</h2>
+                <div className="sim-history-list">
+                  {simHistory.map((entry, idx) => (
+                    <div key={`sim-hist-${idx}`} className="sim-history-row">
+                      <div className="sim-history-action-badge" data-action={entry.action}>
+                        {entry.action === "inserted" ? "NEW" : "UPD"}
+                      </div>
+                      <div className="sim-history-body">
+                        <div className="sim-history-head">
+                          <span className="sim-history-patron">{entry.patronId}</span>
+                          <span className="sim-history-arrow">→</span>
+                          <span className="sim-history-table">{entry.tableName}</span>
+                          <span className={`sim-history-status ${entry.isActive ? "is-active" : "is-inactive"}`}>
+                            {entry.isActive ? "Active" : "Inactive"}
+                          </span>
+                          {entry.mode === "new" ? (
+                            <span className="sim-history-mode-badge">auto-generated</span>
+                          ) : null}
+                        </div>
+                        <div className="sim-history-meta">
+                          <span>HKD {entry.sessionBetAmount.toLocaleString()} bet</span>
+                          <span>·</span>
+                          <span>Stack HKD {entry.currentStackEstimate.toLocaleString()}</span>
+                          {entry.behaviorTags.length > 0 ? (
+                            <>
+                              <span>·</span>
+                              <span>{entry.behaviorTags.join(", ")}</span>
+                            </>
+                          ) : null}
+                        </div>
+                        <div className="sim-history-time">
+                          {new Date(entry.updatedAt).toLocaleTimeString()}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            ) : null}
 
           </div>
         ) : null}
