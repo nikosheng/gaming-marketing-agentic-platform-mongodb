@@ -5853,3 +5853,235 @@ body.drawer-open {
   color: #4a5a75;
   font-family: monospace;
 }
+
+.sim-history-mode-badge {
+  font-size: 0.63rem;
+  font-weight: 600;
+  color: #a070f0;
+  background: rgba(140, 80, 240, 0.12);
+  border: 1px solid rgba(140, 80, 240, 0.28);
+  border-radius: 8px;
+  padding: 1px 7px;
+  margin-left: 4px;
+  letter-spacing: 0.03em;
+}
+
+/* ── Mode Tab Switcher ── */
+
+.sim-mode-tabs {
+  display: flex;
+  gap: 0;
+  border: 1px solid rgba(60, 100, 180, 0.28);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(10, 18, 40, 0.5);
+  transition: opacity 0.2s;
+}
+
+.sim-mode-tab {
+  flex: 1;
+  padding: 10px 18px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #6080a8;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.18s;
+  letter-spacing: 0.02em;
+  border-right: 1px solid rgba(60, 100, 180, 0.2);
+}
+
+.sim-mode-tab:last-child {
+  border-right: none;
+}
+
+.sim-mode-tab:hover:not(.active) {
+  color: #a0b8d8;
+  background: rgba(30, 55, 110, 0.3);
+}
+
+.sim-mode-tab.active {
+  background: rgba(40, 90, 200, 0.22);
+  color: #7ab4ff;
+  border-bottom: 2px solid #5a9fff;
+  margin-bottom: -1px;
+}
+
+/* ── Add New Patron — generate flow ── */
+
+.sim-gen-desc {
+  font-size: 0.80rem;
+  color: #7a8faa;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.sim-gen-desc code {
+  font-family: monospace;
+  font-size: 0.77rem;
+  color: #7ab4ff;
+  background: rgba(60, 110, 200, 0.12);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.sim-gen-empty {
+  padding: 18px 20px;
+  background: rgba(15, 25, 50, 0.4);
+  border: 1px dashed rgba(60, 100, 180, 0.25);
+  border-radius: 9px;
+  font-size: 0.80rem;
+  color: #5a6f90;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.sim-gen-empty strong {
+  color: #7ab4ff;
+}
+
+/* Preview card */
+
+.sim-gen-preview-card {
+  background: rgba(12, 22, 50, 0.65);
+  border: 1px solid rgba(80, 140, 255, 0.28);
+  border-radius: 10px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 2px 16px rgba(40, 90, 200, 0.08);
+}
+
+.sim-gen-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sim-gen-preview-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6090c8;
+}
+
+.sim-gen-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #3dd68c;
+  animation: pulse-dot 1.6s infinite;
+  margin-left: 2px;
+}
+
+.sim-gen-preview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 20px;
+}
+
+@media (max-width: 600px) {
+  .sim-gen-preview-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sim-gen-preview-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sim-gen-preview-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #4a6080;
+}
+
+.sim-gen-preview-value {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: #c0d0e8;
+}
+
+.sim-gen-preview-value.id {
+  font-family: monospace;
+  font-size: 0.90rem;
+  color: #e0ecff;
+  letter-spacing: 0.03em;
+}
+
+.sim-gen-preview-value.accent {
+  color: #7ab4ff;
+}
+
+.sim-gen-preview-value.status-active {
+  color: #3dd68c;
+}
+
+.sim-gen-preview-value.status-active::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3dd68c;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.sim-gen-preview-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 2px;
+}
+
+.sim-gen-tag {
+  font-size: 0.70rem;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 12px;
+  background: rgba(60, 120, 255, 0.15);
+  border: 1px solid rgba(80, 140, 255, 0.35);
+  color: #7ab4ff;
+}
+
+/* Generate / Regenerate button row */
+
+.sim-gen-btn-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.sim-gen-btn {
+  padding: 9px 22px;
+  border-radius: 8px;
+  font-size: 0.83rem;
+  font-weight: 600;
+  border: 1px solid rgba(80, 140, 255, 0.45);
+  background: rgba(30, 60, 140, 0.25);
+  color: #7ab4ff;
+  cursor: pointer;
+  transition: all 0.18s;
+  letter-spacing: 0.02em;
+}
+
+.sim-gen-btn:hover:not(:disabled) {
+  background: rgba(40, 80, 180, 0.4);
+  border-color: rgba(100, 160, 255, 0.65);
+  color: #a0d0ff;
+}
+
+.sim-gen-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
