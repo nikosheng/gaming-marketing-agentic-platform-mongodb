@@ -77,7 +77,7 @@ services:
       - app-net
 
   # ---------------------------------------------------------------------------
-  # LiteLLM Gateway — routes chat traffic to Azure OpenAI
+  # LiteLLM Gateway — routes chat traffic to Azure OpenAI (or Qwen 3.6 when switched)
   # ---------------------------------------------------------------------------
   litellm:
     image: ghcr.io/berriai/litellm:main-stable
@@ -94,6 +94,10 @@ services:
       AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-12-01-preview}
       OPENAI_API_KEY:           ${OPENAI_API_KEY:-}
       LITELLM_MASTER_KEY:       ${LITELLM_MASTER_KEY}
+      # Qwen 3.6 external vLLM cluster — only needed when the Qwen slot is active
+      # in infra/litellm/config.yaml. Safe to leave empty when using Azure OpenAI.
+      QWEN_API_BASE:            ${QWEN_API_BASE:-}
+      QWEN_API_KEY:             ${QWEN_API_KEY:-}
     volumes:
       - ./infra/litellm/config.yaml:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
