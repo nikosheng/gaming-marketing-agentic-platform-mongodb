@@ -5412,3 +5412,444 @@ body.drawer-open {
   color: #90a8c8;
   line-height: 1.45;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   SIMULATE TAB
+   ═══════════════════════════════════════════════════════════════ */
+
+.sim-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.sim-panel-desc {
+  font-size: 0.83rem;
+  color: #8090b0;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.sim-panel-desc code {
+  font-family: monospace;
+  font-size: 0.80rem;
+  color: #7ab4ff;
+  background: rgba(60, 110, 200, 0.12);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* ── Steps ── */
+
+.sim-step {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  background: rgba(15, 25, 50, 0.45);
+  border: 1px solid rgba(60, 100, 180, 0.18);
+  border-radius: 10px;
+  transition: opacity 0.2s;
+}
+
+.sim-step-disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.sim-step-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sim-step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(80, 140, 255, 0.2);
+  border: 1px solid rgba(80, 140, 255, 0.45);
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #7ab4ff;
+  flex-shrink: 0;
+}
+
+.sim-step-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #c0d0e8;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.sim-step-badge {
+  margin-left: auto;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #5a9fff;
+  background: rgba(60, 100, 200, 0.15);
+  border: 1px solid rgba(60, 100, 200, 0.25);
+  border-radius: 8px;
+  padding: 2px 8px;
+}
+
+/* ── Select dropdown ── */
+
+.sim-select {
+  width: 100%;
+  padding: 8px 12px;
+  background: rgba(10, 18, 40, 0.7);
+  border: 1px solid rgba(60, 100, 180, 0.35);
+  border-radius: 8px;
+  color: #c8d8f0;
+  font-size: 0.84rem;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%235a9fff' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px;
+  transition: border-color 0.2s;
+}
+
+.sim-select:focus {
+  border-color: rgba(90, 160, 255, 0.6);
+  box-shadow: 0 0 0 2px rgba(90, 160, 255, 0.12);
+}
+
+.sim-select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sim-select option {
+  background: #0e1a35;
+  color: #c8d8f0;
+}
+
+.sim-empty-hint {
+  font-size: 0.76rem;
+  color: #7a8faa;
+  font-style: italic;
+  margin: 2px 0 0;
+}
+
+/* ── Form grid ── */
+
+.sim-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 700px) {
+  .sim-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sim-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.sim-form-row-full {
+  grid-column: 1 / -1;
+}
+
+.sim-label {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: #8090b0;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.sim-input {
+  padding: 8px 11px;
+  background: rgba(10, 18, 40, 0.7);
+  border: 1px solid rgba(60, 100, 180, 0.32);
+  border-radius: 7px;
+  color: #c8d8f0;
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color 0.2s;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.sim-input:focus {
+  border-color: rgba(90, 160, 255, 0.55);
+  box-shadow: 0 0 0 2px rgba(90, 160, 255, 0.1);
+}
+
+.sim-input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sim-input-hint {
+  font-size: 0.70rem;
+  color: #5a6a85;
+  line-height: 1.3;
+}
+
+/* ── Behavior tag chips ── */
+
+.sim-tag-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sim-tag-chip {
+  padding: 5px 13px;
+  border-radius: 20px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  border: 1px solid rgba(60, 100, 180, 0.35);
+  background: rgba(20, 35, 70, 0.5);
+  color: #7090b8;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.sim-tag-chip:hover:not(:disabled) {
+  border-color: rgba(90, 160, 255, 0.55);
+  color: #a0c0e8;
+  background: rgba(30, 55, 110, 0.55);
+}
+
+.sim-tag-chip.active {
+  background: rgba(60, 120, 255, 0.2);
+  border-color: rgba(90, 160, 255, 0.7);
+  color: #7ab4ff;
+}
+
+.sim-tag-chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Radio group ── */
+
+.sim-radio-group {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.sim-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.sim-radio-label input[type="radio"] {
+  accent-color: #5a9fff;
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+.sim-radio-text {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #b0c0d8;
+}
+
+.sim-radio-text.active-dot::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #3dd68c;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+.sim-radio-hint {
+  font-size: 0.70rem;
+  color: #5a6a85;
+}
+
+/* ── Feedback messages ── */
+
+.sim-feedback {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.sim-feedback-error {
+  background: rgba(220, 50, 50, 0.12);
+  border: 1px solid rgba(220, 50, 50, 0.35);
+  color: #ff7070;
+}
+
+.sim-feedback-success {
+  background: rgba(40, 180, 100, 0.12);
+  border: 1px solid rgba(40, 180, 100, 0.35);
+  color: #3dd68c;
+}
+
+/* ── CTA row ── */
+
+.sim-cta-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.sim-upsert-btn {
+  padding: 10px 28px;
+  border-radius: 8px;
+  font-size: 0.86rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #2a5adf 0%, #1a3faf 100%);
+  color: #fff;
+  border: 1px solid rgba(90, 140, 255, 0.5);
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.12s;
+  letter-spacing: 0.03em;
+}
+
+.sim-upsert-btn:hover:not(:disabled) {
+  opacity: 0.88;
+  transform: translateY(-1px);
+}
+
+.sim-upsert-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.sim-cta-hint {
+  font-size: 0.73rem;
+  color: #5a6a85;
+  line-height: 1.4;
+}
+
+.sim-cta-hint code {
+  font-family: monospace;
+  font-size: 0.70rem;
+  color: #6a8fcc;
+}
+
+/* ── Recent simulations history ── */
+
+.sim-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sim-history-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  background: rgba(12, 22, 48, 0.5);
+  border: 1px solid rgba(50, 85, 155, 0.2);
+  border-radius: 9px;
+}
+
+.sim-history-action-badge {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.sim-history-action-badge[data-action="inserted"] {
+  background: rgba(40, 180, 100, 0.18);
+  color: #3dd68c;
+  border: 1px solid rgba(40, 180, 100, 0.35);
+}
+
+.sim-history-action-badge[data-action="updated"] {
+  background: rgba(60, 120, 255, 0.18);
+  color: #7ab4ff;
+  border: 1px solid rgba(60, 120, 255, 0.35);
+}
+
+.sim-history-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.sim-history-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sim-history-patron {
+  font-size: 0.83rem;
+  font-weight: 700;
+  color: #c0d0ea;
+  font-family: monospace;
+}
+
+.sim-history-arrow {
+  color: #4a6a99;
+  font-size: 0.80rem;
+}
+
+.sim-history-table {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #7ab4ff;
+}
+
+.sim-history-status {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 10px;
+  margin-left: 4px;
+}
+
+.sim-history-status.is-active {
+  background: rgba(40, 180, 100, 0.15);
+  color: #3dd68c;
+  border: 1px solid rgba(40, 180, 100, 0.3);
+}
+
+.sim-history-status.is-inactive {
+  background: rgba(120, 130, 150, 0.15);
+  color: #8090a8;
+  border: 1px solid rgba(120, 130, 150, 0.25);
+}
+
+.sim-history-meta {
+  font-size: 0.75rem;
+  color: #6a7a95;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sim-history-time {
+  font-size: 0.68rem;
+  color: #4a5a75;
+  font-family: monospace;
+}

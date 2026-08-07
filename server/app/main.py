@@ -25,6 +25,7 @@ from app.routers import (
     patrons,
     pr_efficiency,
     risk_cases,
+    simulate,
     tables,
 )
 
@@ -85,6 +86,7 @@ def create_app() -> FastAPI:
     app.include_router(risk_cases.router, prefix="/api")
     app.include_router(analysis_reports.router, prefix="/api")
     app.include_router(pr_efficiency.router, prefix="/api")
+    app.include_router(simulate.router, prefix="/api")
 
     return app
 
