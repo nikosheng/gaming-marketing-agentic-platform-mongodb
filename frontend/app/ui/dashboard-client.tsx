@@ -326,6 +326,36 @@ type SimulateResponse = {
 
 type ConsoleSection = "patron-eyes" | "offer-catalog" | "patron-insight" | "alert-dashboard" | "pr-efficiency" | "simulate";
 
+const CONSOLE_SECTION_ORDER: ConsoleSection[] = [
+  "patron-eyes",
+  "offer-catalog",
+  "patron-insight",
+  "alert-dashboard",
+  "pr-efficiency",
+  "simulate",
+];
+
+const CONSOLE_SECTION_LOOKUP = new Set<string>(CONSOLE_SECTION_ORDER);
+
+function parseVisibleConsoleSections(rawValue: string | undefined): Set<ConsoleSection> {
+  const allSections = new Set<ConsoleSection>(CONSOLE_SECTION_ORDER);
+  if (!rawValue?.trim()) return allSections;
+
+  const parsed = rawValue
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value): value is ConsoleSection => CONSOLE_SECTION_LOOKUP.has(value));
+
+  return parsed.length > 0 ? new Set(parsed) : allSections;
+}
+
+const VISIBLE_CONSOLE_SECTIONS = parseVisibleConsoleSections(
+  process.env.NEXT_PUBLIC_MANAGEMENT_CONSOLE_TABS
+);
+
+const DEFAULT_ACTIVE_SECTION =
+  CONSOLE_SECTION_ORDER.find((section) => VISIBLE_CONSOLE_SECTIONS.has(section)) ?? "patron-eyes";
+
 // ---------- Simulate tab types ----------
 
 type SimTablePatron = {
@@ -875,7 +905,7 @@ function getPayloadSummary(
 }
 
 export default function DashboardClient() {
-  const [activeSection, setActiveSection] = useState<ConsoleSection>("patron-eyes");
+  const [activeSection, setActiveSection] = useState<ConsoleSection>(DEFAULT_ACTIVE_SECTION);
   const [heatmap, setHeatmap] = useState<HeatmapResponse | null>(null);
   const [selectedTableId, setSelectedTableId] = useState<string>("");
   const [patrons, setPatrons] = useState<PatronResponse | null>(null);
@@ -965,6 +995,11 @@ export default function DashboardClient() {
   const [simError, setSimError] = useState<string>("");
   const [simSuccess, setSimSuccess] = useState<string>("");
   const [simHistory, setSimHistory] = useState<SimHistory[]>([]);
+
+  useEffect(() => {
+    if (VISIBLE_CONSOLE_SECTIONS.has(activeSection)) return;
+    setActiveSection(DEFAULT_ACTIVE_SECTION);
+  }, [activeSection]);
 
   async function safeJson<T>(res: Response): Promise<T | null> {
     if (!res.ok) return null;
@@ -1991,73 +2026,85 @@ export default function DashboardClient() {
           <h1>Management Console</h1>
           <p>Marketing Ops</p>
         </div>
-        <button
-          className={`console-nav-btn ${activeSection === "patron-eyes" ? "active" : ""}`}
-          onClick={() => setActiveSection("patron-eyes")}
-          type="button"
-        >
-          <span className="console-nav-icon">
-            <SectionIcon section="patron-eyes" />
-          </span>
-          <span>Patron Eyes</span>
-        </button>
-        <button
-          className={`console-nav-btn ${activeSection === "offer-catalog" ? "active" : ""}`}
-          onClick={() => setActiveSection("offer-catalog")}
-          type="button"
-        >
-          <span className="console-nav-icon">
-            <SectionIcon section="offer-catalog" />
-          </span>
-          <span>Offer Catalog</span>
-        </button>
-        <button
-          className={`console-nav-btn ${activeSection === "patron-insight" ? "active" : ""}`}
-          onClick={() => setActiveSection("patron-insight")}
-          type="button"
-        >
-          <span className="console-nav-icon">
-            <SectionIcon section="patron-insight" />
-          </span>
-          <span>Patron Insight</span>
-        </button>
-        <button
-          className={`console-nav-btn ${activeSection === "alert-dashboard" ? "active" : ""}`}
-          onClick={() => setActiveSection("alert-dashboard")}
-          type="button"
-        >
-          <span className="console-nav-icon">
-            <SectionIcon section="alert-dashboard" />
-          </span>
-          <span>Alert Dashboard</span>
-          {alertStats && alertStats.newCount > 0 ? (
-            <span style={{ marginLeft: "auto", fontSize: "0.65rem", fontWeight: 700, color: "#ff6b35",
-              background: "rgba(255,107,53,0.15)", border: "1px solid rgba(255,107,53,0.35)",
-              borderRadius: "10px", padding: "1px 6px" }}>
-              {alertStats.newCount}
+        {VISIBLE_CONSOLE_SECTIONS.has("patron-eyes") ? (
+          <button
+            className={`console-nav-btn ${activeSection === "patron-eyes" ? "active" : ""}`}
+            onClick={() => setActiveSection("patron-eyes")}
+            type="button"
+          >
+            <span className="console-nav-icon">
+              <SectionIcon section="patron-eyes" />
             </span>
-          ) : null}
-        </button>
-        <button
-          className={`console-nav-btn ${activeSection === "pr-efficiency" ? "active" : ""}`}
-          onClick={() => setActiveSection("pr-efficiency")}
-          type="button"
-        >
-          <span className="console-nav-icon">
-            <SectionIcon section="pr-efficiency" />
-          </span>
-          <span>PR Efficiency</span>
-        </button>
-        <button
-          className={`console-nav-btn ${activeSection === "simulate" ? "active" : ""}`}
-          onClick={() => setActiveSection("simulate")}
-          type="button"
-        >
-          <span className="console-nav-icon">
-            <SectionIcon section="simulate" />
-          </span>
-          <span>Simulate</span>
-        </button>
+            <span>Patron Eyes</span>
+          </button>
+        ) : null}
+        {VISIBLE_CONSOLE_SECTIONS.has("offer-catalog") ? (
+          <button
+            className={`console-nav-btn ${activeSection === "offer-catalog" ? "active" : ""}`}
+            onClick={() => setActiveSection("offer-catalog")}
+            type="button"
+          >
+            <span className="console-nav-icon">
+              <SectionIcon section="offer-catalog" />
+            </span>
+            <span>Offer Catalog</span>
+          </button>
+        ) : null}
+        {VISIBLE_CONSOLE_SECTIONS.has("patron-insight") ? (
+          <button
+            className={`console-nav-btn ${activeSection === "patron-insight" ? "active" : ""}`}
+            onClick={() => setActiveSection("patron-insight")}
+            type="button"
+          >
+            <span className="console-nav-icon">
+              <SectionIcon section="patron-insight" />
+            </span>
+            <span>Patron Insight</span>
+          </button>
+        ) : null}
+        {VISIBLE_CONSOLE_SECTIONS.has("alert-dashboard") ? (
+          <button
+            className={`console-nav-btn ${activeSection === "alert-dashboard" ? "active" : ""}`}
+            onClick={() => setActiveSection("alert-dashboard")}
+            type="button"
+          >
+            <span className="console-nav-icon">
+              <SectionIcon section="alert-dashboard" />
+            </span>
+            <span>Alert Dashboard</span>
+            {alertStats && alertStats.newCount > 0 ? (
+              <span style={{ marginLeft: "auto", fontSize: "0.65rem", fontWeight: 700, color: "#ff6b35",
+                background: "rgba(255,107,53,0.15)", border: "1px solid rgba(255,107,53,0.35)",
+                borderRadius: "10px", padding: "1px 6px" }}>
+                {alertStats.newCount}
+              </span>
+            ) : null}
+          </button>
+        ) : null}
+        {VISIBLE_CONSOLE_SECTIONS.has("pr-efficiency") ? (
+          <button
+            className={`console-nav-btn ${activeSection === "pr-efficiency" ? "active" : ""}`}
+            onClick={() => setActiveSection("pr-efficiency")}
+            type="button"
+          >
+            <span className="console-nav-icon">
+              <SectionIcon section="pr-efficiency" />
+            </span>
+            <span>PR Efficiency</span>
+          </button>
+        ) : null}
+        {VISIBLE_CONSOLE_SECTIONS.has("simulate") ? (
+          <button
+            className={`console-nav-btn ${activeSection === "simulate" ? "active" : ""}`}
+            onClick={() => setActiveSection("simulate")}
+            type="button"
+          >
+            <span className="console-nav-icon">
+              <SectionIcon section="simulate" />
+            </span>
+            <span>Simulate</span>
+          </button>
+        ) : null}
       </aside>
 
       <section className="console-content">

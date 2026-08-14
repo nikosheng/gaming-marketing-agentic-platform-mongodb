@@ -22,6 +22,8 @@ WORKDIR /app
 # Ensure Next.js build-time rewrites resolve to the backend service in Docker.
 ARG NEXT_PUBLIC_BACKEND_URL=http://backend:8000
 ENV NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL}
+ARG NEXT_PUBLIC_MANAGEMENT_CONSOLE_TABS=patron-eyes,offer-catalog,patron-insight,alert-dashboard,pr-efficiency,simulate
+ENV NEXT_PUBLIC_MANAGEMENT_CONSOLE_TABS=${NEXT_PUBLIC_MANAGEMENT_CONSOLE_TABS}
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .

@@ -160,6 +160,7 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_BACKEND_URL: http://backend:8000
+        NEXT_PUBLIC_MANAGEMENT_CONSOLE_TABS: ${NEXT_PUBLIC_MANAGEMENT_CONSOLE_TABS:-patron-eyes,offer-catalog,patron-insight,alert-dashboard,pr-efficiency,simulate}
     container_name: mgm-frontend
     restart: unless-stopped
     depends_on:
@@ -169,5 +170,6 @@ services:
       - "3000:3000"
     environment:
       NEXT_PUBLIC_BACKEND_URL: http://backend:8000
+      NEXT_PUBLIC_MANAGEMENT_CONSOLE_TABS: ${NEXT_PUBLIC_MANAGEMENT_CONSOLE_TABS:-patron-eyes,offer-catalog,patron-insight,alert-dashboard,pr-efficiency,simulate}
     networks:
       - app-net
