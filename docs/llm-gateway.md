@@ -5,7 +5,8 @@ the app. After the Aug-2026 migration to a Python backend, the two paths are
 independent:
 
 - **Chat** goes through a local **LiteLLM** gateway (Docker) that fronts
-  Azure OpenAI, with an optional OpenAI fallback slot.
+  Azure OpenAI by default, with a pre-wired Qwen 3.6 (vLLM) switch slot and
+  an optional OpenAI fallback slot.
 - **Embeddings** run **in-process** inside the FastAPI backend using the
   official `voyageai[local]` Python SDK. There is no longer a TEI container
   or any external embedding service.
@@ -36,11 +37,15 @@ targeted at Debian 12 x86_64 (CPU-only).
                           │  dim=1024             │   └───┬──────────────────┘
                           └───────────────────────┘       │
                                                           ▼
-                                              ┌────────────────────┐
-                                              │  Azure OpenAI      │
-                                              │  (chat-primary)    │
-                                              └────────────────────┘
-                                          (OpenAI fallback slot reserved)
+                                               ┌────────────────────┐
+                                               │  Azure OpenAI      │  ← active (default)
+                                               │  (chat-primary)    │
+                                               └────────────────────┘
+                                               ┌────────────────────┐
+                                               │  Qwen 3.6 (vLLM)  │  ← switch slot (disabled)
+                                               │  external cluster  │
+                                               └────────────────────┘
+                                           (OpenAI fallback slot also reserved)
 ```
 
 **Key properties**
@@ -83,12 +88,14 @@ server/app/smoke/
 
 Aliases the app is allowed to request:
 
-| Alias | Backend | Purpose |
-|-------|---------|---------|
-| `chat-primary` | Azure OpenAI `gpt-5.4-mini-2` | All chat completions |
+| Alias | Backend | Purpose | Status |
+|-------|---------|---------|--------|
+| `chat-primary` | Azure OpenAI `gpt-5.4-mini-2` | All chat completions | **Active** |
+| `chat-primary` | Qwen 3.6 via external vLLM | All chat completions | Disabled (switch slot) |
 
-A commented-out slot for `openai/gpt-4o-mini` fallback exists in
-`litellm/config.yaml`. See section 5 to enable it.
+Two commented-out slots exist in `litellm/config.yaml`:
+- **Qwen 3.6** — full provider switch (section 5 below).
+- **OpenAI `gpt-4o-mini`** — fallback on Azure failure (section 6 below).
 
 **Embeddings are NOT listed here.** They are produced by the Python
 `voyageai` SDK. See `server/app/llm/embeddings.py`.
@@ -117,12 +124,60 @@ service via `pydantic-settings`)
 | `AZURE_OPENAI_ENDPOINT` | Azure resource endpoint URL |
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI key |
 | `AZURE_OPENAI_API_VERSION` | Default `2024-12-01-preview` |
-| `OPENAI_API_KEY` | Only needed once the fallback slot is enabled |
+| `OPENAI_API_KEY` | Only needed once the OpenAI fallback slot is enabled |
+| `QWEN_API_BASE` | Only needed when switching to Qwen 3.6 (vLLM endpoint URL, e.g. `https://your-cluster.example.com/v1`) |
+| `QWEN_API_KEY` | Only needed when switching to Qwen 3.6 |
 | `LITELLM_MASTER_KEY` | Bearer token clients must present |
 
 ---
 
-## 5. Enabling the OpenAI fallback
+## 5. Switching to Qwen 3.6 (external vLLM cluster)
+
+The gateway has a pre-wired but disabled Qwen 3.6 slot in `config.yaml`.
+No backend code changes are required — the app only addresses `chat-primary`.
+
+### Prerequisites
+
+- Your external GPU cluster runs a vLLM server with an OpenAI-compatible
+  `/v1/chat/completions` endpoint.
+- The model is deployed under the name `qwen3-6` (if vLLM serves it under a
+  different name, update `model: openai/<name>` in the config block to match).
+
+### Steps to switch to Qwen 3.6
+
+1. **Edit `infra/litellm/config.yaml`:**
+   - Comment out the Azure OpenAI block.
+   - Uncomment the Qwen 3.6 block (the instructions are inline in the file).
+
+2. **Set the two Qwen env vars** in your `.env` (root) and/or `infra/.env`:
+
+   ```
+   QWEN_API_BASE=https://your-cluster.example.com/v1
+   QWEN_API_KEY=your-secret-key
+   ```
+
+3. **Restart the gateway only** (no backend or frontend rebuild needed):
+
+   ```
+   docker compose up -d litellm
+   ```
+
+4. **Verify** with the smoke test:
+
+   ```
+   docker compose exec backend uv run python -m app.smoke.gateway_smoke
+   ```
+
+### Switching back to Azure OpenAI
+
+Reverse step 1 (uncomment Azure block, comment Qwen block) and repeat
+steps 3–4. The Azure env vars (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`,
+`AZURE_OPENAI_API_VERSION`) are always present in the container — no env
+changes needed to switch back.
+
+---
+
+## 6. Enabling the OpenAI fallback
 
 The `chat-primary` alias supports multiple entries. LiteLLM will try them in
 order on failure. To activate OpenAI as fallback:
@@ -147,7 +202,7 @@ No backend code change is required.
 
 ---
 
-## 6. Switching embedding models
+## 7. Switching embedding models
 
 Because embeddings are done in-process, there's no gateway config to touch.
 Set `LLM_EMBEDDING_MODEL` to any Voyage model name supported by
@@ -160,7 +215,7 @@ will use it automatically. The rest of the code path is unchanged.
 
 ---
 
-## 7. Adding Langfuse (deferred)
+## 8. Adding Langfuse (deferred)
 
 To enable observability later, append to `litellm/config.yaml`:
 
@@ -184,7 +239,7 @@ traced by LiteLLM/Langfuse.
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|

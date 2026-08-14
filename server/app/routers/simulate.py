@@ -8,6 +8,7 @@ Provides:
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import random
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -15,6 +16,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
 from app.collections import web_collections as cols
+from app.config import settings
 from app.routers._common import db_dep, error_response, ok_response
 
 router = APIRouter(tags=["simulate"])
@@ -26,6 +28,52 @@ BEHAVIOR_TAG_OPTIONS = [
     "LateNight",
     "CardCounterWatch",
 ]
+
+SIM_GAME_TYPES = ["Baccarat", "Blackjack", "Roulette", "SicBo", "Poker"]
+SIM_REGIONS = ["Macau", "HongKong", "Guangdong", "OtherGBA", "Taiwan", "International"]
+SIM_RISK_FLAGS = ["HighVariance", "FrequentCashout", "NightOnly", "PromoSensitive"]
+
+
+def _random_tier_for_bet(session_bet_amount: float) -> str:
+    if session_bet_amount >= 20000:
+        return random.choices(["Platinum", "Diamond"], weights=[0.35, 0.65], k=1)[0]
+    if session_bet_amount >= 12000:
+        return random.choices(["Gold", "Platinum", "Diamond"], weights=[0.2, 0.65, 0.15], k=1)[0]
+    if session_bet_amount >= 8000:
+        return random.choices(["Silver", "Gold", "Platinum"], weights=[0.15, 0.7, 0.15], k=1)[0]
+    if session_bet_amount >= 4000:
+        return random.choices(["Bronze", "Silver", "Gold"], weights=[0.25, 0.6, 0.15], k=1)[0]
+    return random.choices(["Bronze", "Silver"], weights=[0.85, 0.15], k=1)[0]
+
+
+def _random_region() -> str:
+    return random.choices(
+        SIM_REGIONS,
+        weights=[0.22, 0.26, 0.2, 0.1, 0.12, 0.1],
+        k=1,
+    )[0]
+
+
+def _random_risk_flags() -> list[str]:
+    if random.random() < 0.6:
+        return ["None"]
+    count = 1 if random.random() < 0.8 else 2
+    return random.sample(SIM_RISK_FLAGS, k=count)
+
+
+def _random_preferred_games(primary_game: str) -> list[str]:
+    primary = primary_game if primary_game in SIM_GAME_TYPES else "Baccarat"
+    others = [g for g in SIM_GAME_TYPES if g != primary]
+    if random.random() < 0.65:
+        return [primary]
+    if random.random() < 0.9:
+        return [primary, random.choice(others)]
+    return [primary, *random.sample(others, k=2)]
+
+
+def _random_adt(session_bet_amount: float) -> float:
+    baseline = max(800.0, session_bet_amount * random.uniform(0.65, 1.2))
+    return round(baseline)
 
 
 # ---------- GET /simulate/tables/{table_id}/patrons ----------
@@ -90,6 +138,12 @@ class UpsertSessionRequest(BaseModel):
     currentStackEstimate: float = Field(..., ge=0, description="Current chip stack estimate")
     behaviorTags: list[str] = Field(default_factory=list, description="Behavior tags")
     isActive: bool = Field(default=True, description="Whether patron is active at the table")
+    name: str | None = Field(default=None, description="Optional SIM patron name")
+    maskedName: str | None = Field(default=None, description="Optional masked name")
+    tier: str | None = Field(default=None, description="Optional tier")
+    adt: float | None = Field(default=None, ge=0, description="Optional ADT")
+    pointsBalance: float | None = Field(default=None, ge=0, description="Optional points")
+    region: str | None = Field(default=None, description="Optional region")
 
 
 @router.post("/simulate/sessions")
@@ -127,6 +181,50 @@ async def upsert_session(
             update_doc,
             upsert=True,
         )
+
+        if result.upserted_id:
+            table = await db[cols.tables].find_one(
+                {"tableId": body.tableId}, {"_id": 0, "gameType": 1}
+            )
+            game_type = str((table or {}).get("gameType") or "Baccarat")
+            tail = body.patronId[-3:] if len(body.patronId) >= 3 else body.patronId
+
+            inferred_tier = body.tier or _random_tier_for_bet(body.sessionBetAmount)
+            inferred_adt = body.adt if body.adt is not None else _random_adt(body.sessionBetAmount)
+            inferred_region = body.region or _random_region()
+
+            profile_payload = {
+                "patronId": body.patronId,
+                "name": body.name or f"Sim Patron {tail}",
+                "maskedName": body.maskedName or f"S***{tail}",
+                "tier": inferred_tier,
+                "adt": inferred_adt,
+                "preferredGames": _random_preferred_games(game_type),
+                "riskFlags": _random_risk_flags(),
+                "pointsBalance": body.pointsBalance if body.pointsBalance is not None else round(inferred_adt * random.uniform(2.8, 8.0)),
+                "lastActiveAt": now,
+                "region": inferred_region,
+                "activities": [],
+                "preferenceEmbedding": [0.0] * settings.llm.embedding_dim,
+                "createdAt": now,
+                "updatedAt": now,
+            }
+            insert_profile = {
+                key: value
+                for key, value in profile_payload.items()
+                if key not in {"lastActiveAt", "updatedAt"}
+            }
+            await db[cols.patrons].update_one(
+                {"patronId": body.patronId},
+                {
+                    "$setOnInsert": insert_profile,
+                    "$set": {
+                        "lastActiveAt": now,
+                        "updatedAt": now,
+                    },
+                },
+                upsert=True,
+            )
 
         action = "inserted" if result.upserted_id else "updated"
 

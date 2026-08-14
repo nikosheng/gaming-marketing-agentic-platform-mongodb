@@ -14,6 +14,7 @@ from app.agents.alert_analyzer import run_alert_analysis
 from app.agents.minbet_optimizer_agent import run_min_bet_optimizer
 from app.agents.table_drilldown_agent import analyze_table_patrons
 from app.collections import web_collections as cols
+from app.config import settings
 from app.routers._common import db_dep, error_response, ok_response
 
 router = APIRouter(tags=["tables"])
@@ -133,11 +134,11 @@ async def table_patrons(
                     "as": "patron",
                 }
             },
-            {"$unwind": "$patron"},
+            {"$unwind": {"path": "$patron", "preserveNullAndEmptyArrays": True}},
             {
                 "$project": {
                     "_id": 0,
-                    "patronId": "$patron.patronId",
+                    "patronId": {"$ifNull": ["$patron.patronId", "$patronId"]},
                     "maskedName": "$patron.maskedName",
                     "tier": "$patron.tier",
                     "adt": "$patron.adt",
@@ -353,6 +354,104 @@ def _build_session(table_id: str, index: int, session_bet_amount: float) -> dict
     }
 
 
+def _pick_sim_tier(session_bet_amount: float) -> str:
+    if session_bet_amount >= 20000:
+        return random.choices(["Platinum", "Diamond"], weights=[0.35, 0.65], k=1)[0]
+    if session_bet_amount >= 12000:
+        return random.choices(["Gold", "Platinum", "Diamond"], weights=[0.2, 0.65, 0.15], k=1)[0]
+    if session_bet_amount >= 8000:
+        return random.choices(["Silver", "Gold", "Platinum"], weights=[0.15, 0.7, 0.15], k=1)[0]
+    if session_bet_amount >= 4000:
+        return random.choices(["Bronze", "Silver", "Gold"], weights=[0.25, 0.6, 0.15], k=1)[0]
+    return random.choices(["Bronze", "Silver"], weights=[0.85, 0.15], k=1)[0]
+
+
+def _pick_sim_region(seed: str) -> str:
+    regions = ["Macau", "HongKong", "Guangdong", "OtherGBA", "Taiwan", "International"]
+    return random.choices(regions, weights=[0.22, 0.26, 0.2, 0.1, 0.12, 0.1], k=1)[0]
+
+
+def _build_sim_profile(
+    patron_id: str,
+    game_type: str,
+    session_bet_amount: float,
+    now: datetime,
+) -> dict[str, Any]:
+    tail = patron_id[-3:] if len(patron_id) >= 3 else patron_id
+    tier = _pick_sim_tier(session_bet_amount)
+    adt = round(max(800.0, session_bet_amount * random.uniform(0.65, 1.2)))
+    games = ["Baccarat", "Blackjack", "Roulette", "SicBo", "Poker"]
+    primary_game = game_type if game_type in games else "Baccarat"
+    other_games = [g for g in games if g != primary_game]
+    if random.random() < 0.65:
+        preferred_games = [primary_game]
+    elif random.random() < 0.9:
+        preferred_games = [primary_game, random.choice(other_games)]
+    else:
+        preferred_games = [primary_game, *random.sample(other_games, k=2)]
+
+    if random.random() < 0.6:
+        risk_flags = ["None"]
+    else:
+        risk_pool = ["HighVariance", "FrequentCashout", "NightOnly", "PromoSensitive"]
+        risk_count = 1 if random.random() < 0.8 else 2
+        risk_flags = random.sample(risk_pool, k=risk_count)
+
+    return {
+        "patronId": patron_id,
+        "name": f"Sim Patron {tail}",
+        "maskedName": f"S***{tail}",
+        "tier": tier,
+        "adt": adt,
+        "preferredGames": preferred_games,
+        "riskFlags": risk_flags,
+        "pointsBalance": round(adt * random.uniform(2.8, 8.0)),
+        "lastActiveAt": now,
+        "region": _pick_sim_region(patron_id),
+        "activities": [],
+        "preferenceEmbedding": [0.0] * settings.llm.embedding_dim,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+
+
+async def _upsert_sim_patron_profiles(
+    db: AsyncIOMotorDatabase,
+    sessions: list[dict[str, Any]],
+    game_type: str,
+) -> None:
+    sim_sessions = [s for s in sessions if str(s.get("patronId", "")).startswith("SIM-")]
+    if not sim_sessions:
+        return
+    now = datetime.now(timezone.utc)
+    for session in sim_sessions:
+        patron_id = str(session.get("patronId") or "")
+        if not patron_id:
+            continue
+        profile = _build_sim_profile(
+            patron_id=patron_id,
+            game_type=game_type,
+            session_bet_amount=float(session.get("sessionBetAmount") or 0),
+            now=now,
+        )
+        insert_profile = {
+            key: value
+            for key, value in profile.items()
+            if key not in {"lastActiveAt", "updatedAt"}
+        }
+        await db[cols.patrons].update_one(
+            {"patronId": patron_id},
+            {
+                "$setOnInsert": insert_profile,
+                "$set": {
+                    "lastActiveAt": now,
+                    "updatedAt": now,
+                },
+            },
+            upsert=True,
+        )
+
+
 def _generate_sessions(
     table_id: str, min_bet: float, scenario: _Scenario
 ) -> list[dict[str, Any]]:
@@ -395,7 +494,7 @@ async def simulate_sessions(
             pass
 
         table = await db[cols.tables].find_one(
-            {"tableId": table_id}, {"_id": 0, "minBet": 1}
+            {"tableId": table_id}, {"_id": 0, "minBet": 1, "gameType": 1}
         )
         if not table:
             return error_response(f"Table {table_id} not found.", status_code=404)
@@ -409,6 +508,11 @@ async def simulate_sessions(
         sessions = _generate_sessions(table_id, min_bet, scenario)
         if sessions:
             await db[cols.sessions].insert_many(sessions)
+            await _upsert_sim_patron_profiles(
+                db,
+                sessions,
+                str(table.get("gameType") or "Baccarat"),
+            )
 
         injected_count = len(sessions)
         if injected_count > 0:
@@ -591,6 +695,12 @@ async def simulate_round(
                     "isActive": True,
                 }
             )
+
+        await _upsert_sim_patron_profiles(
+            db,
+            all_sessions,
+            str(table.get("gameType") or "Baccarat"),
+        )
 
         patron_ids = [s["patronId"] for s in all_sessions]
         await db[cols.sessions].delete_many(
