@@ -138,6 +138,12 @@ services:
       LITELLM_BASE_URL: http://litellm:4000
     volumes:
       - voyage-model-cache:/root/.cache/voyageai
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/api/health').status==200 else sys.exit(1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     networks:
       - app-net
 
@@ -157,7 +163,8 @@ services:
     container_name: mgm-frontend
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - "3000:3000"
     environment:

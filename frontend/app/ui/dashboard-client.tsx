@@ -27,13 +27,13 @@ type HeatmapResponse = {
 
 type PatronRow = {
   patronId: string;
-  maskedName: string;
-  tier: string;
-  adt: number;
-  pointsBalance: number;
+  maskedName?: string;
+  tier?: string;
+  adt?: number;
+  pointsBalance?: number;
   sessionBetAmount: number;
   currentStackEstimate: number;
-  behaviorTags: string[];
+  behaviorTags?: string[];
   lastActionAt: string;
   region?: string;
 };
@@ -205,6 +205,36 @@ type RiskCasePayload = {
     confidence: number;
     checklist: Array<{ key: string; passed: boolean; notes?: string }>;
     analystNotes: string;
+  };
+  reasoningAssessment?: {
+    recommendationRiskLevel: "Low" | "Medium" | "High" | "Critical";
+    recommendationEscalationTier: "Standard" | "Senior";
+    confidence: number;
+    rationale: string;
+    keyDrivers: string[];
+    contradictorySignals: string[];
+    missingEvidence: string[];
+    suggestedActions: string[];
+    requiresHumanReview: boolean;
+    model?: string;
+    promptVersion?: string;
+    fallbackUsed?: boolean;
+    latencyMs?: number;
+    inputHash?: string;
+  };
+  policyDecision?: {
+    finalRiskLevel: "Low" | "Medium" | "High" | "Critical";
+    finalEscalationTier: "Standard" | "Senior";
+    overriddenFields?: string[];
+    overrideReason?: string;
+    appliedRules?: string[];
+    requiresHumanReview?: boolean;
+  };
+  qualityControl?: {
+    schemaValid?: boolean;
+    fallbackUsed?: boolean;
+    llmLatencyMs?: number;
+    modelVersion?: string;
   };
   timeline: Array<{
     eventType: string;
@@ -936,11 +966,18 @@ export default function DashboardClient() {
   const [simSuccess, setSimSuccess] = useState<string>("");
   const [simHistory, setSimHistory] = useState<SimHistory[]>([]);
 
+  async function safeJson<T>(res: Response): Promise<T | null> {
+    if (!res.ok) return null;
+    const contentType = res.headers.get("content-type") ?? "";
+    if (!contentType.includes("application/json")) return null;
+    return (await res.json()) as T;
+  }
+
   useEffect(() => {
     async function fetchHeatmap() {
       const res = await fetch("/api/tables/heatmap", { cache: "no-store" });
-      const data = (await res.json()) as HeatmapResponse;
-      if (!data.ok) return;
+      const data = await safeJson<HeatmapResponse>(res);
+      if (!data?.ok) return;
       setHeatmap(data);
       if (!selectedTableId && data.tables.length > 0) {
         setSelectedTableId(data.tables[0].tableId);
@@ -949,14 +986,16 @@ export default function DashboardClient() {
 
     async function fetchOffers() {
       const res = await fetch("/api/offers/dashboard", { cache: "no-store" });
-      const data = (await res.json()) as OfferDashboardResponse;
-      if (!data.ok) return;
+      const data = await safeJson<OfferDashboardResponse>(res);
+      if (!data?.ok) return;
       setOfferDashboard(data);
     }
 
     fetchHeatmap().catch((err) => setError((err as Error).message));
     fetchOffers().catch((err) => setError((err as Error).message));
-    const interval = window.setInterval(fetchHeatmap, 5000);
+    const interval = window.setInterval(() => {
+      fetchHeatmap().catch(() => undefined);
+    }, 5000);
     return () => window.clearInterval(interval);
   }, [selectedTableId]);
 
@@ -1040,8 +1079,8 @@ export default function DashboardClient() {
     setSimulatePanelOpen(false);
     async function fetchPatrons() {
       const res = await fetch(`/api/tables/${selectedTableId}/patrons`, { cache: "no-store" });
-      const data = (await res.json()) as PatronResponse;
-      if (!data.ok) return;
+      const data = await safeJson<PatronResponse>(res);
+      if (!data?.ok) return;
       setPatrons(data);
       setGeneratePatronId((current) => current || data.patrons[0]?.patronId || "");
     }
@@ -1049,11 +1088,11 @@ export default function DashboardClient() {
       const res = await fetch(`/api/tables/${selectedTableId}/minbet-recommendations`, {
         cache: "no-store",
       });
-      const data = (await res.json()) as {
+      const data = await safeJson<{
         ok: boolean;
         recommendations?: MinBetRecommendation[];
-      };
-      if (!data.ok) return;
+      }>(res);
+      if (!data?.ok) return;
       setMinBetHistory(data.recommendations ?? []);
     }
     fetchPatrons().catch((err) => setError((err as Error).message));
@@ -1188,7 +1227,8 @@ export default function DashboardClient() {
     }
   }
 
-  function formatAmount(value: number) {
+  function formatAmount(value: number | null | undefined) {
+    if (typeof value !== "number" || Number.isNaN(value)) return "-";
     return value.toLocaleString();
   }
 
@@ -2072,13 +2112,13 @@ export default function DashboardClient() {
                 const hottestZone = Object.entries(zoneMap).sort((a, b) => b[1] - a[1])[0];
                 return (
                   <div className="heatmap-stats-bar">
-                    <div className="heatmap-stat-tile">
+                    <div className="heatmap-stat-tile heatmap-stat-tile-centered">
                       <span className="heatmap-stat-label">Total Tables</span>
                       <span className="heatmap-stat-value accent-blue">
                         {heatmap?.metrics.totalTables ?? "-"}
                       </span>
                     </div>
-                    <div className="heatmap-stat-tile">
+                    <div className="heatmap-stat-tile heatmap-stat-tile-centered">
                       <span className="heatmap-stat-label">Total Patrons</span>
                       <span className="heatmap-stat-value accent-green">
                         {heatmap?.metrics.totalPatrons ?? "-"}
@@ -2114,17 +2154,16 @@ export default function DashboardClient() {
                     <div className="heatmap-stat-tile">
                       <span className="heatmap-stat-label">Hottest Zone</span>
                       {hottestZone ? (
-                        <>
+                        <div className="hottest-zone-summary">
                           <span className="heatmap-stat-value accent-red">Zone {hottestZone[0]}</span>
-                          <span className="heatmap-stat-sub">{hottestZone[1]} patrons</span>
-                        </>
+                          <div className="hottest-zone-detail">
+                            <span className="hottest-zone-count">{hottestZone[1]}</span>
+                            <span className="hottest-zone-unit">patrons</span>
+                          </div>
+                        </div>
                       ) : (
                         <span className="heatmap-stat-value">-</span>
                       )}
-                    </div>
-                    <div className="heatmap-stat-tile">
-                      <span className="heatmap-stat-label">Status</span>
-                      <span className="heatmap-stat-live">Live · 5s refresh</span>
                     </div>
                   </div>
                 );
@@ -2170,6 +2209,27 @@ export default function DashboardClient() {
                         </svg>
                         {table.zone}
                       </span>
+                    </div>
+                    <div className="table-primary-metrics">
+                      <div className="table-primary-metric">
+                        <span className="table-primary-label">Patrons</span>
+                        <span className="table-primary-value">{table.patronCount}</span>
+                      </div>
+                      <div
+                        className={`table-occupancy-pill ${
+                          table.occupancyRate >= 0.8
+                            ? "high"
+                            : table.occupancyRate >= 0.5
+                              ? "medium"
+                              : "low"
+                        }`}
+                      >
+                        <span className="table-occupancy-pill-label">Occupancy</span>
+                        <span className="table-occupancy-pill-value">
+                          {Math.round(table.occupancyRate * 100)}
+                          <em>%</em>
+                        </span>
+                      </div>
                     </div>
                     <div
                       className={`table-occupancy-bar ${
@@ -2262,7 +2322,7 @@ export default function DashboardClient() {
                 <div className="patron-row" key={patron.patronId}>
                   <div className="patron-head">
                     <strong>{patron.patronId}</strong>
-                    <span className="small">{patron.tier}</span>
+                    <span className="small">{patron.tier ?? "-"}</span>
                     {patron.region ? (
                       <span className="region-badge">{regionLabel(patron.region)}</span>
                     ) : null}
@@ -4336,10 +4396,16 @@ export default function DashboardClient() {
           <div className="risk-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
             <div className="risk-modal-head">
               <div className="risk-modal-head-left">
-                <h3>Patron Risk Workflow</h3>
+                <h3>Patron Risk Review</h3>
                 <div className="risk-modal-head-chips">
-                  <span className="mono-pill">{riskCasePatronId || riskCase?.patronId || "—"}</span>
-                  <span className="mono-pill">{riskCase?.caseId ?? "Initializing..."}</span>
+                  <span className="mono-pill">
+                    <span className="risk-pill-label">賓客</span>
+                    <span className="risk-pill-value">{riskCasePatronId || riskCase?.patronId || "—"}</span>
+                  </span>
+                  <span className="mono-pill">
+                    <span className="risk-pill-label">案件</span>
+                    <span className="risk-pill-value">{riskCase?.caseId ?? "初始化中..."}</span>
+                  </span>
                 </div>
               </div>
               {riskCase ? (
@@ -4360,7 +4426,7 @@ export default function DashboardClient() {
               </button>
             </div>
 
-            {riskCaseLoading ? <p className="small">Loading workflow...</p> : null}
+            {riskCaseLoading ? <p className="small">正在載入流程...</p> : null}
             {riskCase ? (
               <div className="risk-modal-body">
                 {(() => {
@@ -4370,48 +4436,201 @@ export default function DashboardClient() {
                   return (
                     <>
                 <div className="risk-chip-row">
-                  <span className={`gradient-pill gradient-pill-status`}>Status: {riskCase.status}</span>
+                  <span className={`gradient-pill gradient-pill-status`}>狀態：{riskCase.status}</span>
                   <span
                     className={`gradient-pill gradient-pill-escalation ${
                       riskCase.escalationTier === "Senior" ? "is-senior" : ""
                     }`}
                   >
-                    Escalation: {riskCase.escalationTier}
+                    升級層級：{riskCase.escalationTier}
                   </span>
                   <span className={`gradient-pill gradient-pill-risk risk-${overallTone}`}>
-                    {riskCase.riskLevel} Risk
+                    {riskCase.riskLevel} 風險
                   </span>
                 </div>
 
                 <div className="risk-cards-grid">
                   <div className={`analysis-metric-card risk-score-card risk-${lossTone}`}>
                     <div className="analysis-metric-head">
-                      <span>Loss Chasing Agent</span>
+                      <span>追損風險代理</span>
                     </div>
                     <strong>{(riskCase.lossChasingAssessment.score * 100).toFixed(1)}%</strong>
-                    <p className="small risk-score-label">Label {riskCase.lossChasingAssessment.label}</p>
+                    <p className="small risk-score-label">判定：{riskCase.lossChasingAssessment.label}</p>
                     <p className="small">{riskCase.lossChasingAssessment.explanation}</p>
-                    <p className="small">Confidence {(riskCase.lossChasingAssessment.confidence * 100).toFixed(1)}%</p>
+                    <p className="small">信心：{(riskCase.lossChasingAssessment.confidence * 100).toFixed(1)}%</p>
                   </div>
                   <div className={`analysis-metric-card risk-score-card risk-${amlTone}`}>
                     <div className="analysis-metric-head">
-                      <span>Financial / AML Agent</span>
+                      <span>財務 / AML 代理</span>
                     </div>
                     <strong>{(riskCase.financialAssessment.amlRiskScore * 100).toFixed(1)}%</strong>
                     <p className="small risk-score-label">
-                      Source Risk {riskCase.financialAssessment.sourceOfFundsRisk}
+                      資金來源風險：{riskCase.financialAssessment.sourceOfFundsRisk}
                     </p>
                     <p className="small">
-                      Credit {riskCase.financialAssessment.creditBand} | SoF Risk{" "}
+                      信用等級：{riskCase.financialAssessment.creditBand} | 資金來源風險：{" "}
                       {riskCase.financialAssessment.sourceOfFundsRisk}
                     </p>
                     <p className="small">{riskCase.financialAssessment.analystNotes}</p>
                   </div>
                 </div>
 
+                {riskCase.reasoningAssessment || riskCase.policyDecision ? (
+                  <div className="risk-reasoning-grid">
+                    {riskCase.reasoningAssessment ? (
+                      <section className="risk-reasoning-card">
+                        <h4>AI 風險判讀建議</h4>
+                        <p className="small">此區塊為 AI 對本案的判讀與建議，供審核參考。</p>
+                        <div className="risk-reasoning-topline">
+                          <span
+                            className={`analysis-badge risk-level-chip risk-${normalizeRiskTone(
+                              riskCase.reasoningAssessment.recommendationRiskLevel
+                            )}`}
+                          >
+                            AI 建議風險：{riskCase.reasoningAssessment.recommendationRiskLevel}
+                          </span>
+                          <span className="analysis-badge">
+                            AI 建議升級層級：{riskCase.reasoningAssessment.recommendationEscalationTier}
+                          </span>
+                          <span className="analysis-badge">
+                            信心：{(riskCase.reasoningAssessment.confidence * 100).toFixed(1)}%
+                          </span>
+                          {riskCase.reasoningAssessment.requiresHumanReview ? (
+                            <span className="analysis-badge risk-human-review">需人工複核</span>
+                          ) : null}
+                        </div>
+                        <p className="small">{riskCase.reasoningAssessment.rationale}</p>
+                        {riskCase.reasoningAssessment.keyDrivers.length > 0 ? (
+                          <div className="risk-mini-list">
+                            <span className="small risk-mini-title">關鍵驅動因子</span>
+                            <ul>
+                              {riskCase.reasoningAssessment.keyDrivers.slice(0, 3).map((driver) => (
+                                <li key={driver}>{driver}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                        <div className="risk-reasoning-quality-row">
+                          {typeof riskCase.reasoningAssessment.fallbackUsed === "boolean" ? (
+                            <span className={`analysis-badge ${riskCase.reasoningAssessment.fallbackUsed ? "risk-fallback-on" : "risk-fallback-off"}`}>
+                              {riskCase.reasoningAssessment.fallbackUsed ? "已使用備援" : "LLM 啟用中"}
+                            </span>
+                          ) : null}
+                          {typeof riskCase.reasoningAssessment.latencyMs === "number" ? (
+                            <span className="analysis-badge">{riskCase.reasoningAssessment.latencyMs} ms</span>
+                          ) : null}
+                          {riskCase.reasoningAssessment.model ? (
+                            <span className="analysis-badge">{riskCase.reasoningAssessment.model}</span>
+                          ) : null}
+                        </div>
+                      </section>
+                    ) : null}
+
+                    {riskCase.policyDecision ? (
+                      <section className="risk-reasoning-card risk-policy-card">
+                        <h4>合規規則最終判定</h4>
+                        <p className="small">此區塊為系統套用合規規則後的最終結果。</p>
+                        <div className="risk-reasoning-topline">
+                          <span
+                            className={`analysis-badge risk-level-chip risk-${normalizeRiskTone(
+                              riskCase.policyDecision.finalRiskLevel
+                            )}`}
+                          >
+                            最終風險：{riskCase.policyDecision.finalRiskLevel}
+                          </span>
+                          <span className="analysis-badge">
+                            政策升級層級：{riskCase.policyDecision.finalEscalationTier}
+                          </span>
+                          {riskCase.policyDecision.requiresHumanReview ? (
+                            <span className="analysis-badge risk-human-review">需人工複核</span>
+                          ) : null}
+                        </div>
+                        {riskCase.policyDecision.overrideReason ? (
+                          <p className="small">覆寫原因：{riskCase.policyDecision.overrideReason}</p>
+                        ) : (
+                          <p className="small">政策檢查通過，已採用 AI 建議。</p>
+                        )}
+                        {riskCase.policyDecision.overriddenFields?.length ? (
+                          <p className="small">
+                            覆寫欄位：{riskCase.policyDecision.overriddenFields.join(", ")}
+                          </p>
+                        ) : null}
+                        {riskCase.policyDecision.appliedRules?.length ? (
+                          <div className="risk-mini-list">
+                            <span className="small risk-mini-title">套用規則</span>
+                            <ul>
+                              {riskCase.policyDecision.appliedRules.slice(0, 3).map((rule) => (
+                                <li key={rule}>{rule}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                      </section>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {riskCase.reasoningAssessment?.missingEvidence?.length ||
+                riskCase.reasoningAssessment?.contradictorySignals?.length ||
+                riskCase.reasoningAssessment?.suggestedActions?.length ? (
+                  <section className="risk-evidence-panel">
+                    <h4>後續建議（證據與行動）</h4>
+                    <p className="small risk-evidence-intro">
+                      下列內容可協助你快速判斷下一步該補哪些資訊，以及如何安排後續跟進。
+                    </p>
+                    <div className="risk-evidence-grid">
+                    {riskCase.reasoningAssessment?.missingEvidence?.length ? (
+                      <article className="risk-evidence-block">
+                        <div className="risk-evidence-block-head">
+                          <span className="small risk-mini-title">缺少證據</span>
+                          <span className="risk-evidence-count">
+                            {riskCase.reasoningAssessment.missingEvidence.slice(0, 4).length}
+                          </span>
+                        </div>
+                        <ul>
+                          {riskCase.reasoningAssessment.missingEvidence.slice(0, 4).map((item, idx) => (
+                            <li key={`${idx}-${item}`}>{item}</li>
+                          ))}
+                        </ul>
+                      </article>
+                    ) : null}
+                    {riskCase.reasoningAssessment?.contradictorySignals?.length ? (
+                      <article className="risk-evidence-block">
+                        <div className="risk-evidence-block-head">
+                          <span className="small risk-mini-title">訊號矛盾</span>
+                          <span className="risk-evidence-count">
+                            {riskCase.reasoningAssessment.contradictorySignals.slice(0, 3).length}
+                          </span>
+                        </div>
+                        <ul>
+                          {riskCase.reasoningAssessment.contradictorySignals.slice(0, 3).map((item, idx) => (
+                            <li key={`${idx}-${item}`}>{item}</li>
+                          ))}
+                        </ul>
+                      </article>
+                    ) : null}
+                    {riskCase.reasoningAssessment?.suggestedActions?.length ? (
+                      <article className="risk-evidence-block">
+                        <div className="risk-evidence-block-head">
+                          <span className="small risk-mini-title">建議行動</span>
+                          <span className="risk-evidence-count">
+                            {riskCase.reasoningAssessment.suggestedActions.slice(0, 3).length}
+                          </span>
+                        </div>
+                        <ul>
+                          {riskCase.reasoningAssessment.suggestedActions.slice(0, 3).map((item, idx) => (
+                            <li key={`${idx}-${item}`}>{item}</li>
+                          ))}
+                        </ul>
+                      </article>
+                    ) : null}
+                    </div>
+                  </section>
+                ) : null}
+
                 <div className="risk-agent-graph-grid">
                   <div className="risk-agent-graph-card">
-                    <h4>Loss Chasing Agent Graph</h4>
+                    <h4>追損風險流程圖</h4>
                     <div className="risk-agent-steps">
                       {buildLossAgentSteps(riskCase).map((step, idx, arr) => (
                         <div className="risk-agent-step" key={step.id}>
@@ -4434,7 +4653,7 @@ export default function DashboardClient() {
                   </div>
 
                   <div className="risk-agent-graph-card">
-                    <h4>Financial / AML Agent Graph</h4>
+                    <h4>財務 / AML 流程圖</h4>
                     <div className="risk-agent-steps">
                       {buildAmlAgentSteps(riskCase).map((step, idx, arr) => (
                         <div className="risk-agent-step" key={step.id}>
@@ -4458,7 +4677,7 @@ export default function DashboardClient() {
                 </div>
 
                 <div className="risk-checklist">
-                  <h4>AML Checklist</h4>
+                  <h4>AML 檢核清單</h4>
                   {riskCase.financialAssessment.checklist.map((item) => (
                     (() => {
                       const display = getChecklistDisplay(item, riskCase.financialAssessment);
@@ -4466,23 +4685,23 @@ export default function DashboardClient() {
                         <details className="risk-check-accordion" key={item.key}>
                           <summary className="risk-check-summary">
                             <span className={`analysis-badge risk-level-chip ${item.passed ? "risk-low" : "risk-high"}`}>
-                              {item.passed ? "Pass" : "Flag"}
+                              {item.passed ? "通過" : "警示"}
                             </span>
                             <strong>{display.title}</strong>
-                            <span className="small risk-check-expand-hint">Expand</span>
+                            <span className="small risk-check-expand-hint">展開</span>
                           </summary>
                           <div className="risk-check-content">
                             <p className="small">
-                              {item.passed ? "Why Passed: " : "Why Flagged: "}
+                              {item.passed ? "通過原因：" : "警示原因："}
                               {display.reason}
                             </p>
                             <div className="risk-calc-box">
-                              <span className="risk-calc-title">Calculation Logic</span>
+                              <span className="risk-calc-title">計算邏輯</span>
                               <p className="small risk-calc-text">{display.logic}</p>
                             </div>
                             {item.notes ? (
                               <p className="small">
-                                Signal Detail: {item.notes}
+                                訊號細節：{item.notes}
                               </p>
                             ) : null}
                           </div>
@@ -4493,7 +4712,7 @@ export default function DashboardClient() {
                 </div>
 
                 <div className="risk-admin-box">
-                  <h4>Admin Approval</h4>
+                  <h4>管理員審核</h4>
                   <div className="segmented-control" role="radiogroup" aria-label="Admin decision">
                     {(["Approve", "Reject", "RequestMoreInfo"] as const).map((opt) => (
                       <button
@@ -4506,7 +4725,7 @@ export default function DashboardClient() {
                         }`}
                         onClick={() => setAdminDecision(opt)}
                       >
-                        {opt === "RequestMoreInfo" ? "Request More Info" : opt}
+                        {opt === "Approve" ? "核准" : opt === "Reject" ? "駁回" : "要求補件"}
                       </button>
                     ))}
                   </div>
@@ -4515,7 +4734,7 @@ export default function DashboardClient() {
                     value={adminRationale}
                     onChange={(e) => setAdminRationale(e.target.value)}
                     rows={3}
-                    placeholder="Enter decision rationale for audit..."
+                    placeholder="請輸入審核理由（將記錄於稽核軌跡）..."
                   />
                   <div className="composer-actions">
                     <button
@@ -4524,13 +4743,13 @@ export default function DashboardClient() {
                       onClick={() => onSubmitAdminDecision().catch(() => undefined)}
                       disabled={riskCaseLoading || !adminRationale.trim()}
                     >
-                      {riskCaseLoading ? "Submitting..." : "Submit Decision"}
+                      {riskCaseLoading ? "送出中..." : "送出決策"}
                     </button>
                   </div>
                 </div>
 
                 <section className="pr-profile-card">
-                  <h4>PR Assignment</h4>
+                  <h4>PR 指派</h4>
                   {prAssignment && prAgentProfile ? (
                     <>
                       <div className="pr-profile-head">
@@ -4553,11 +4772,11 @@ export default function DashboardClient() {
                             className="small"
                             title={new Date(prAssignment.assignedAt).toLocaleString()}
                           >
-                            Assigned {formatRelative(prAssignment.assignedAt)}
+                            指派於 {formatRelative(prAssignment.assignedAt)}
                           </div>
                         </div>
                         <div className="pr-fit-block">
-                          <span className="small">Fit Score</span>
+                          <span className="small">適配分數</span>
                           <strong
                             className={`pr-fit-value pr-fit-${
                               prAssignment.fitScore >= 0.7
@@ -4574,7 +4793,7 @@ export default function DashboardClient() {
 
                       <div className="pr-capacity">
                         <div className="pr-capacity-head">
-                          <span className="small">Capacity</span>
+                          <span className="small">容量</span>
                           <strong>
                             {prAgentProfile.currentActivePatrons} / {prAgentProfile.maxActivePatrons}{" "}
                             patrons
@@ -4598,7 +4817,7 @@ export default function DashboardClient() {
 
                       {prAgentProfile.preferredTiers?.length ? (
                         <div className="pr-chip-group">
-                          <span className="pr-chip-label">Preferred Tiers</span>
+                          <span className="pr-chip-label">偏好等級</span>
                           <div className="pr-chip-row">
                             {prAgentProfile.preferredTiers.map((t) => (
                               <span className="pr-chip pr-chip-tier" key={`tier-${t}`}>
@@ -4610,7 +4829,7 @@ export default function DashboardClient() {
                       ) : null}
                       {prAgentProfile.preferredGames?.length ? (
                         <div className="pr-chip-group">
-                          <span className="pr-chip-label">Preferred Games</span>
+                          <span className="pr-chip-label">偏好遊戲</span>
                           <div className="pr-chip-row">
                             {prAgentProfile.preferredGames.map((g) => (
                               <span className="pr-chip pr-chip-game" key={`game-${g}`}>
@@ -4622,7 +4841,7 @@ export default function DashboardClient() {
                       ) : null}
                       {prAgentProfile.preferredLanguages?.length ? (
                         <div className="pr-chip-group">
-                          <span className="pr-chip-label">Languages</span>
+                          <span className="pr-chip-label">語言</span>
                           <div className="pr-chip-row">
                             {prAgentProfile.preferredLanguages.map((l) => (
                               <span className="pr-chip pr-chip-lang" key={`lang-${l}`}>
@@ -4634,7 +4853,7 @@ export default function DashboardClient() {
                       ) : null}
                       {prAgentProfile.specialtyTags?.length ? (
                         <div className="pr-chip-group">
-                          <span className="pr-chip-label">Specialties</span>
+                          <span className="pr-chip-label">專長</span>
                           <div className="pr-chip-row">
                             {prAgentProfile.specialtyTags.map((s) => (
                               <span className="pr-chip pr-chip-spec" key={`spec-${s}`}>
@@ -4656,26 +4875,26 @@ export default function DashboardClient() {
                             className="small"
                             title={new Date(prAgentProfile.lastAssignedAt).toLocaleString()}
                           >
-                            Last assignment {formatRelative(prAgentProfile.lastAssignedAt)}
+                            上次指派 {formatRelative(prAgentProfile.lastAssignedAt)}
                           </span>
                         ) : null}
                       </div>
                     </>
                   ) : prAssignment ? (
                     <p className="small">
-                      PR Agent {prAssignment.prAgentId} — profile loading…
+                      PR 專員 {prAssignment.prAgentId} — 資料載入中…
                     </p>
                   ) : (
                     <div className="pr-profile-empty">
                       <p className="small">
-                        No assignment yet. Approve the case to trigger PR assignment.
+                        尚未指派。核准案件後會觸發 PR 指派。
                       </p>
                     </div>
                   )}
                 </section>
 
                 <section className="risk-timeline-rail">
-                  <h4>Timeline</h4>
+                  <h4>時間軸</h4>
                   <ol className="risk-timeline-list">
                     {riskCase.timeline
                       .slice()
@@ -4724,7 +4943,7 @@ export default function DashboardClient() {
                 })()}
               </div>
             ) : (
-              <p className="small">No workflow case loaded yet.</p>
+              <p className="small">尚未載入風險流程案件。</p>
             )}
           </div>
         </div>
