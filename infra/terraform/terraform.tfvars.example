@@ -1,0 +1,47 @@
+# ---------------------------------------------------------------------------
+# terraform.tfvars.example
+#
+# Copy this file to terraform.tfvars and fill in your real values.
+# terraform.tfvars is gitignored to prevent secrets from being committed.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#   # edit terraform.tfvars
+#   terraform init
+#   terraform plan
+#   terraform apply
+# ---------------------------------------------------------------------------
+
+# --- Required ---
+
+# GCP project ID (find it in the GCP Console → Project Info panel)
+project_id = "your-gcp-project-id"
+
+# GCP region where the existing VM lives
+region = "us-central1"
+
+# GCP zone where the existing VM lives (must match the VM's zone exactly)
+zone = "us-central1-a"
+
+# Name of the existing GCE VM instance that runs docker-compose
+vm_name = "mgm-docker-host"
+
+# Fully-qualified domain name for the load balancer
+# After terraform apply, point an A record for this domain to the output lb_ip.
+domain = "platform.example.com"
+
+# --- Optional (defaults shown) ---
+
+# Name of the existing VPC network the VM is attached to
+# network = "default"
+
+# Port the docker-compose frontend container exposes on the VM host
+# frontend_port = 3000
+
+# Short prefix for all LB resource names (change if deploying multiple stacks)
+# lb_name_prefix = "mgm-platform"
+
+# Health check tuning
+# health_check_interval_sec        = 30
+# health_check_timeout_sec         = 10
+# health_check_healthy_threshold   = 2
+# health_check_unhealthy_threshold = 3
