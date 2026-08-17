@@ -1,0 +1,175 @@
+# =============================================================================
+# Unified platform stack — macau-gaming-marketing-ai-project
+#
+# Services:
+#   mongodb   – MongoDB Atlas Local (replica set, supports $vectorSearch)
+#   redis     – LiteLLM response cache
+#   litellm   – OpenAI-compatible chat gateway → Azure OpenAI
+#   backend   – Python FastAPI (Motor + LangGraph + Voyage AI local embeddings)
+#   frontend  – Next.js 16 (standalone build, App Router)
+#
+# Quick start:
+#   cp .env.example .env        # fill in Azure OpenAI keys + LITELLM_MASTER_KEY
+#   docker compose up --build
+#   open http://localhost:3000
+#
+# Seeding (run after `docker compose up`):
+#   docker compose exec backend uv run python -m app.seed.seed
+#   docker compose exec backend uv run python -m app.seed.seed_interactions
+#   docker compose exec backend uv run python -m app.scripts.backfill_embeddings
+# =============================================================================
+
+name: mgm-platform
+
+networks:
+  app-net:
+    driver: bridge
+
+volumes:
+  mongo-data:
+  redis-data:
+  voyage-model-cache:
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # MongoDB Atlas Local
+  # Runs a single-node replica set that supports Atlas-specific features
+  # including $vectorSearch, Atlas Search, and triggers.
+  # ---------------------------------------------------------------------------
+  # mongodb:
+  #   image: mongodb/mongodb-atlas-local:latest
+  #   container_name: mgm-mongodb
+  #   restart: unless-stopped
+  #   ports:
+  #     - "27017:27017"
+  #   volumes:
+  #     - mongo-data:/data/db
+  #   healthcheck:
+  #     test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping').ok", "--quiet"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 10
+  #     start_period: 30s
+  #   networks:
+  #     - app-net
+
+  # ---------------------------------------------------------------------------
+  # Redis — LiteLLM response cache + routing state
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: mgm-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    command:
+      - redis-server
+      - --appendonly yes
+      - --maxmemory 512mb
+      - --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - app-net
+
+  # ---------------------------------------------------------------------------
+  # LiteLLM Gateway — routes chat traffic to Azure OpenAI (or Qwen 3.6 when switched)
+  # ---------------------------------------------------------------------------
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: mgm-litellm
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+    environment:
+      AZURE_OPENAI_ENDPOINT:    ${AZURE_OPENAI_ENDPOINT}
+      AZURE_OPENAI_API_KEY:     ${AZURE_OPENAI_API_KEY}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-12-01-preview}
+      OPENAI_API_KEY:           ${OPENAI_API_KEY:-}
+      LITELLM_MASTER_KEY:       ${LITELLM_MASTER_KEY}
+      # Qwen 3.6 external vLLM cluster — only needed when the Qwen slot is active
+      # in infra/litellm/config.yaml. Safe to leave empty when using Azure OpenAI.
+      QWEN_API_BASE:            ${QWEN_API_BASE:-}
+      QWEN_API_KEY:             ${QWEN_API_KEY:-}
+    volumes:
+      - ./infra/litellm/config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness').status==200 else sys.exit(1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    networks:
+      - app-net
+
+  # ---------------------------------------------------------------------------
+  # Backend — Python FastAPI + LangGraph + Voyage AI local embeddings
+  #
+  # Environment precedence:
+  #   1. `environment:` block below (service-discovery overrides)
+  #   2. `env_file: .env` (secrets: Azure keys, LiteLLM key, etc.)
+  #
+  # Voyage AI model weights (~700 MB) are downloaded on first start and cached
+  # in the `voyage-model-cache` named volume at /root/.cache/voyageai.
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: mgm-backend
+    restart: unless-stopped
+    depends_on:
+      litellm:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      MONGODB_URI: mongodb+srv://dbuser:Tsadmin123456@mongodb-tapdata.e1pdtmf.mongodb.net/
+      # Override localhost references with Docker service names.
+      LITELLM_BASE_URL: http://litellm:4000
+    volumes:
+      - voyage-model-cache:/root/.cache/voyageai
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/api/health').status==200 else sys.exit(1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    networks:
+      - app-net
+
+  # ---------------------------------------------------------------------------
+  # Frontend — Next.js 16 standalone (App Router, React 19)
+  #
+  # NEXT_PUBLIC_BACKEND_URL drives the server-side API rewrite in
+  # next.config.mjs — set to the Docker service name so rewrites resolve
+  # inside the container network, not via the host's localhost.
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_BACKEND_URL: http://backend:8000
+        NEXT_PUBLIC_MANAGEMENT_CONSOLE_TABS: ${NEXT_PUBLIC_MANAGEMENT_CONSOLE_TABS:-patron-eyes,offer-catalog,patron-insight,alert-dashboard,pr-efficiency,simulate}
+    container_name: mgm-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_BACKEND_URL: http://backend:8000
+      NEXT_PUBLIC_MANAGEMENT_CONSOLE_TABS: ${NEXT_PUBLIC_MANAGEMENT_CONSOLE_TABS:-patron-eyes,offer-catalog,patron-insight,alert-dashboard,pr-efficiency,simulate}
+    networks:
+      - app-net

@@ -1,5 +1,6 @@
 # dependencies
 /node_modules
+frontend/node_modules
 /.pnp
 .pnp.js
 
@@ -8,6 +9,7 @@
 
 # next.js
 /.next/
+frontend/.next/
 /out/
 
 # production
@@ -16,6 +18,9 @@
 # misc
 .DS_Store
 *.pem
+docs/customer-data-requirements.md
+docs/Sands AI Data Set.csv
+docs/schema-reference.md
 
 # debug
 npm-debug.log*
@@ -25,6 +30,7 @@ yarn-error.log*
 # local env files
 .env*.local
 .env
+infra/.env
 
 # vercel
 .vercel
@@ -32,3 +38,28 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+.env.python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
