@@ -70,3 +70,8 @@ variable "health_check_unhealthy_threshold" {
   type        = number
   default     = 3
 }
+
+variable "dns_zone_name" {
+  description = "Resource name of the existing Cloud DNS managed zone in the GCP project (e.g. 'themongodb-com'). This is the zone's short name, not the DNS name. Find it with: gcloud dns managed-zones list --project=<project_id>"
+  type        = string
+}

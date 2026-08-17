@@ -33,7 +33,12 @@ output "backend_service_name" {
   value       = google_compute_backend_service.frontend_backend.name
 }
 
-output "dns_setup_instruction" {
-  description = "Human-readable reminder of the manual DNS step required after apply."
-  value       = "ACTION REQUIRED: Add a DNS A record -> ${google_compute_global_address.lb_ip.address} for ${var.domain}. The Google-managed SSL cert will not provision until DNS resolves. Allow up to 15 minutes after DNS propagation."
+output "dns_a_record" {
+  description = "The Cloud DNS A record created by Terraform. No manual DNS step is required."
+  value       = "${google_dns_record_set.frontend_a.name} A ${google_compute_global_address.lb_ip.address} (TTL ${google_dns_record_set.frontend_a.ttl}s)"
+}
+
+output "ssl_cert_status_cmd" {
+  description = "Run this command to monitor the Google-managed SSL cert provisioning status. It becomes ACTIVE within ~15 minutes of DNS propagation."
+  value       = "gcloud compute ssl-certificates describe ${google_compute_managed_ssl_certificate.lb_cert.name} --global --format='get(managed.status,managed.domainStatus)'"
 }

@@ -26,8 +26,12 @@ zone = "us-central1-a"
 vm_name = "mgm-docker-host"
 
 # Fully-qualified domain name for the load balancer
-# After terraform apply, point an A record for this domain to the output lb_ip.
 domain = "platform.example.com"
+
+# Resource name of the existing Cloud DNS managed zone (not the DNS name).
+# Run: gcloud dns managed-zones list --project=<project_id>
+# Use the value from the "NAME" column, e.g. "themongodb-com"
+dns_zone_name = "themongodb-com"
 
 # --- Optional (defaults shown) ---
 
