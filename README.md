@@ -290,6 +290,29 @@ docker compose logs -f backend     # tail backend logs only
 docker compose ps                  # show service status
 ```
 
+### Database restore (mongo-restore service)
+
+On first `docker compose up`, the `mongo-restore` service automatically restores the `casino_marketing_demo` database from the `dump/` directory into the local MongoDB Atlas container. It runs once and exits — subsequent starts detect the sentinel file and skip the restore immediately.
+
+To **force a full re-restore** (e.g. after pulling updated dump data):
+
+```bash
+# 1. Remove the sentinel volume so mongo-restore treats the next run as a fresh init
+docker volume rm mgm-platform_mongo-restore-sentinel
+
+# 2. Optionally wipe the database volume too (clean slate)
+docker volume rm mgm-platform_mongo-data
+
+# 3. Restart the stack — mongo-restore will run again automatically
+docker compose up
+```
+
+To **monitor the restore progress** on first boot:
+
+```bash
+docker compose logs -f mongo-restore
+```
+
 ---
 
 ## Quick Start — Local Development

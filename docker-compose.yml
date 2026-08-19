@@ -27,6 +27,7 @@ networks:
 
 volumes:
   mongo-data:
+  mongo-restore-sentinel:
   redis-data:
   voyage-model-cache:
 
@@ -37,22 +38,57 @@ services:
   # Runs a single-node replica set that supports Atlas-specific features
   # including $vectorSearch, Atlas Search, and triggers.
   # ---------------------------------------------------------------------------
-  # mongodb:
-  #   image: mongodb/mongodb-atlas-local:latest
-  #   container_name: mgm-mongodb
-  #   restart: unless-stopped
-  #   ports:
-  #     - "27017:27017"
-  #   volumes:
-  #     - mongo-data:/data/db
-  #   healthcheck:
-  #     test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping').ok", "--quiet"]
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 10
-  #     start_period: 30s
-  #   networks:
-  #     - app-net
+  mongodb:
+    image: mongodb/mongodb-atlas-local:latest
+    container_name: mgm-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping').ok", "--quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - app-net
+
+  # ---------------------------------------------------------------------------
+  # One-time restore — seeds casino_marketing_demo from the local dump.
+  # Runs only when the sentinel volume is empty (i.e. fresh stack).
+  # Exits with code 0 so it does not block the rest of the stack.
+  # To force a re-restore: docker volume rm mgm-platform_mongo-restore-sentinel
+  # ---------------------------------------------------------------------------
+  mongo-restore:
+    image: mongodb/mongodb-atlas-local:latest
+    container_name: mgm-mongo-restore
+    restart: "no"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - ./dump:/dump:ro
+      - mongo-restore-sentinel:/sentinel
+    entrypoint: >
+      bash -c "
+        if [ -f /sentinel/.restored ]; then
+          echo '[restore] Already restored, skipping.';
+          exit 0;
+        fi;
+        echo '[restore] Running mongorestore for casino_marketing_demo...';
+        mongorestore
+          --host mgm-mongodb
+          --port 27017
+          --db casino_marketing_demo
+          --drop
+          /dump/casino_marketing_demo
+        && touch /sentinel/.restored
+        && echo '[restore] Done.'
+      "
+    networks:
+      - app-net
 
   # ---------------------------------------------------------------------------
   # Redis — LiteLLM response cache + routing state
@@ -133,7 +169,7 @@ services:
       - "8000:8000"
     env_file: .env
     environment:
-      MONGODB_URI: mongodb+srv://dbuser:Tsadmin123456@mongodb-tapdata.e1pdtmf.mongodb.net/
+      MONGODB_URI: mongodb://mgm-mongodb:27017/?directConnection=true
       # Override localhost references with Docker service names.
       LITELLM_BASE_URL: http://litellm:4000
     volumes:
