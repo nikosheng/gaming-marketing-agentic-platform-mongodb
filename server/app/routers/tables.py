@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import math
 import random
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Body, Depends, Request
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pydantic import BaseModel
 from pymongo import ReturnDocument
 
 from app.agents.alert_analyzer import run_alert_analysis
@@ -419,12 +422,20 @@ async def _upsert_sim_patron_profiles(
     db: AsyncIOMotorDatabase,
     sessions: list[dict[str, Any]],
     game_type: str,
+    profile_overrides: dict[str, dict[str, Any]] | None = None,
 ) -> None:
-    sim_sessions = [s for s in sessions if str(s.get("patronId", "")).startswith("SIM-")]
-    if not sim_sessions:
+    """Upsert patron_profiles for all simulated sessions (P- prefixed IDs).
+
+    ``profile_overrides`` maps patronId → partial profile fields that should
+    be used *instead of* the random _build_sim_profile defaults (used by
+    targeted-alert patron generation to set specific tier / adt / behaviorTags).
+    """
+    eligible = [s for s in sessions if str(s.get("patronId", "")).startswith("P-")]
+    if not eligible:
         return
     now = datetime.now(timezone.utc)
-    for session in sim_sessions:
+    overrides = profile_overrides or {}
+    for session in eligible:
         patron_id = str(session.get("patronId") or "")
         if not patron_id:
             continue
@@ -434,6 +445,9 @@ async def _upsert_sim_patron_profiles(
             session_bet_amount=float(session.get("sessionBetAmount") or 0),
             now=now,
         )
+        # Apply any targeted overrides (tier, adt, riskFlags, behaviorTags, etc.)
+        if patron_id in overrides:
+            profile.update(overrides[patron_id])
         insert_profile = {
             key: value
             for key, value in profile.items()
@@ -533,97 +547,142 @@ async def simulate_sessions(
         return error_response(str(exc))
 
 
-# ---------- Simulate-round (test patrons + alert analysis) ----------
+# ---------- Simulate-round (P-9xxxxx patrons + alert analysis) ----------
 
 
-_TEST_BET_SEQUENCES: dict[str, list[int]] = {
-    "TEST-S1-P1": [12000, 15500, 11200, 5000, 8000, 12000, 15500, 11200, 5000, 8000],
-    "TEST-S1-P2": [4000, 6000, 3500, 5000, 7000, 4000, 6000, 3500, 5000, 7000],
-    "TEST-S2-P1": [8000, 9500, 12000, 14000, 11000, 8000, 9500, 12000, 14000, 11000],
-    "TEST-S3-P1": [18000, 18000, 18000, 18000, 18000, 18000, 18000, 18000, 18000, 18000],
-    "TEST-S3-P2": [10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000],
-}
+# ---------- Scripted base patron sequences (P-9xxxxx IDs, table-derived) ----------
 
-_TEST_PATRON_PROFILES: list[dict[str, Any]] = [
-    {
-        "patronId": "TEST-S1-P1",
-        "name": "Test Alpha",
-        "maskedName": "T***AP",
-        "tier": "Gold",
-        "adt": 8500,
-        "preferredGames": ["Baccarat"],
-        "riskFlags": ["HighVariance"],
-        "pointsBalance": 45000,
-        "region": "HongKong",
-    },
-    {
-        "patronId": "TEST-S1-P2",
-        "name": "Test Beta",
-        "maskedName": "T***BT",
-        "tier": "Bronze",
-        "adt": 2000,
-        "preferredGames": ["SicBo"],
-        "riskFlags": ["None"],
-        "pointsBalance": 3000,
-        "region": "Macau",
-    },
-    {
-        "patronId": "TEST-S2-P1",
-        "name": "Test Gamma",
-        "maskedName": "T***GM",
-        "tier": "Silver",
-        "adt": 5200,
-        "preferredGames": ["Blackjack"],
-        "riskFlags": ["None"],
-        "pointsBalance": 12000,
-        "region": "Guangdong",
-    },
-    {
-        "patronId": "TEST-S3-P1",
-        "name": "Test Delta",
-        "maskedName": "T***DT",
-        "tier": "Bronze",
-        "adt": 3000,
-        "preferredGames": ["Baccarat"],
-        "riskFlags": ["HighVariance"],
-        "pointsBalance": 5000,
-        "region": "Guangdong",
-    },
-    {
-        "patronId": "TEST-S3-P2",
-        "name": "Test Epsilon",
-        "maskedName": "T***EP",
-        "tier": "Silver",
-        "adt": 3000,
-        "preferredGames": ["Roulette"],
-        "riskFlags": ["None"],
-        "pointsBalance": 8000,
-        "region": "HongKong",
-    },
+# Five deterministic bet sequences (cycled per round) for the scripted patrons.
+# Index 0-4 → scripted patrons; indices 5-8 → random-bet patrons.
+_SCRIPTED_BET_SEQUENCES: list[list[int]] = [
+    [12000, 15500, 11200, 5000, 8000, 12000, 15500, 11200, 5000, 8000],  # idx 0 – Gold/HighVariance
+    [4000, 6000, 3500, 5000, 7000, 4000, 6000, 3500, 5000, 7000],        # idx 1 – Bronze/low
+    [8000, 9500, 12000, 14000, 11000, 8000, 9500, 12000, 14000, 11000],   # idx 2 – Silver/climbing
+    [18000, 18000, 18000, 18000, 18000, 18000, 18000, 18000, 18000, 18000],# idx 3 – consistent high
+    [10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000],# idx 4 – steady mid
+]
+
+_SCRIPTED_PROFILES: list[dict[str, Any]] = [
+    {"tier": "Gold",   "adt": 8500, "riskFlags": ["HighVariance"],  "behaviorTags": ["Aggressive"]},
+    {"tier": "Bronze", "adt": 2000, "riskFlags": ["None"],          "behaviorTags": ["Conservative"]},
+    {"tier": "Silver", "adt": 5200, "riskFlags": ["None"],          "behaviorTags": ["Conservative"]},
+    {"tier": "Bronze", "adt": 3000, "riskFlags": ["HighVariance"],  "behaviorTags": ["Aggressive"]},
+    {"tier": "Silver", "adt": 3000, "riskFlags": ["None"],          "behaviorTags": ["Aggressive"]},
 ]
 
 
+def _derive_sim_patron_ids(table_id: str) -> list[str]:
+    """Return 9 stable P-9xxxxx IDs for this table (5 scripted + 4 random-bet).
+
+    Derivation: strip non-digits from table_id, use as base offset.
+    Table T-0001 → P-900010 … P-900018 (base = 900000 + table_num × 10).
+    Supports tables T-0001 through T-9999 without collision.
+    """
+    num = int("".join(c for c in table_id if c.isdigit()) or "0")
+    base = 900000 + num * 10
+    return [f"P-{base + i:06d}" for i in range(9)]
+
+
 def _random_bet(min_bet: float) -> float:
-    multiplier = 3 + random.randint(0, 11)
-    return min_bet * multiplier
+    return min_bet * (3 + random.randint(0, 11))
 
 
-async def _upsert_test_patrons(db: AsyncIOMotorDatabase) -> None:
-    now = datetime.now(timezone.utc)
-    for patron in _TEST_PATRON_PROFILES:
-        payload = {
-            **patron,
-            "lastActiveAt": now,
-            "activities": [],
-            "preferenceEmbedding": [0.0] * 1024,
-            "createdAt": now,
-            "updatedAt": now,
-        }
-        await db[cols.patrons].update_one(
-            {"patronId": patron["patronId"]},
-            {"$setOnInsert": payload},
-            upsert=True,
-        )
+# ---------- Targeted patron generation (alert-rule-driven) ----------
+
+
+class SimulateRoundRequest(BaseModel):
+    targetRuleIds: list[str] = []
+
+
+def _derive_targeted_patron_id(rule_id: str, table_id: str, condition_index: int) -> str:
+    """Stable P-8xxxxx ID for a targeted patron (rule + table + condition index)."""
+    key = f"{rule_id}:{table_id}:{condition_index}"
+    h = int(hashlib.md5(key.encode()).hexdigest(), 16)
+    num = 800000 + (h % 99999)
+    return f"P-{num:06d}"
+
+
+def _build_targeted_session_and_profile(
+    condition: dict[str, Any],
+    patron_id: str,
+    table_id: str,
+    min_bet: float,
+    now: datetime,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return (session_doc, profile_override) tuned to satisfy the given condition."""
+    ctype = condition.get("type", "")
+    params = condition.get("params") or {}
+
+    # --- derive session fields per condition type ---
+    if ctype == "CONSECUTIVE_ROUNDS_BET_THRESHOLD":
+        threshold = float(params.get("threshold", 10000))
+        bet = max(min_bet * 3, threshold * 1.2)
+        adt = round(threshold * 0.3)
+        tags = ["Aggressive"]
+        tier = "Gold"
+
+    elif ctype == "CUMULATIVE_ROUNDS_BET_THRESHOLD":
+        rounds = int(params.get("rounds", 5))
+        total = float(params.get("totalThreshold", 50000))
+        bet = math.ceil(total / rounds * 1.1)
+        adt = 2000
+        tags = ["Aggressive"]
+        tier = "Gold"
+
+    elif ctype == "SINGLE_ROUND_ADT_MULTIPLIER":
+        multiplier = float(params.get("multiplier", 5))
+        adt = max(800, round(min_bet * 2))
+        bet = round(adt * multiplier * 1.2)
+        tags = ["Aggressive"]
+        tier = "Silver"
+
+    elif ctype == "SESSION_BET_ABOVE":
+        threshold = float(params.get("threshold", 30000))
+        bet = round(threshold * 1.1)
+        adt = round(threshold * 0.5)
+        tags = ["PromoSeeker"]
+        tier = "Silver"
+
+    elif ctype == "TIER_MATCH":
+        tiers: list[str] = params.get("tiers") or ["Gold"]
+        tier = tiers[0]
+        bet = round(min_bet * 5)
+        adt = round(min_bet * 4)
+        tags = ["Conservative"]
+
+    elif ctype == "BEHAVIOR_TAG_MATCH":
+        req_tags: list[str] = params.get("tags") or ["Aggressive"]
+        tags = [req_tags[0]]
+        tier = "Silver"
+        bet = round(min_bet * 5)
+        adt = round(min_bet * 3)
+
+    else:
+        bet = round(min_bet * 5)
+        adt = round(min_bet * 2)
+        tags = ["Aggressive"]
+        tier = "Silver"
+
+    tail = patron_id[-3:]
+    session: dict[str, Any] = {
+        "patronId": patron_id,
+        "tableId": table_id,
+        "seatedAt": now - timedelta(hours=1),
+        "lastActionAt": now,
+        "sessionBetAmount": float(bet),
+        "currentStackEstimate": round(bet * (1.5 + random.random())),
+        "behaviorTags": tags,
+        "isActive": True,
+    }
+    profile_override: dict[str, Any] = {
+        "name": f"Targeted {tail}",
+        "maskedName": f"T***{tail}",
+        "tier": tier,
+        "adt": float(adt),
+        "riskFlags": ["HighVariance"],
+        "behaviorTags": tags,
+    }
+    return session, profile_override
 
 
 @router.get("/tables/{table_id}/simulate-round")
@@ -639,18 +698,30 @@ async def get_simulate_round_counter(
 
 @router.post("/tables/{table_id}/simulate-round")
 async def simulate_round(
-    table_id: str, db: AsyncIOMotorDatabase = Depends(db_dep)
+    table_id: str,
+    body: SimulateRoundRequest = Body(default_factory=SimulateRoundRequest),
+    db: AsyncIOMotorDatabase = Depends(db_dep),
 ) -> Any:
+    """Simulate one betting round for a table.
+
+    - Default (no targetRuleIds): injects 9 scripted P-9xxxxx patrons with
+      deterministic bet sequences that gradually trigger the seed alert rules
+      after several rounds.
+    - With targetRuleIds: replaces scripted patrons with ones whose bet amounts,
+      tiers, ADTs, and behavior tags are tuned to satisfy each targeted rule's
+      conditions. One patron is generated per condition per rule.
+    """
     try:
         if not table_id:
             return error_response("tableId is required", status_code=400)
 
         table = await db[cols.tables].find_one(
-            {"tableId": table_id}, {"_id": 0, "minBet": 1}
+            {"tableId": table_id}, {"_id": 0, "minBet": 1, "gameType": 1}
         )
         if not table:
             return error_response(f"Table {table_id} not found.", status_code=404)
         min_bet = float(table.get("minBet") or 300)
+        game_type = str(table.get("gameType") or "Baccarat")
 
         counter = await db[cols.table_round_counters].find_one_and_update(
             {"tableId": table_id},
@@ -660,76 +731,118 @@ async def simulate_round(
         )
         round_number = int((counter or {}).get("roundNumber") or 1)
 
-        await _upsert_test_patrons(db)
-
         now = datetime.now(timezone.utc)
         all_sessions: list[dict[str, Any]] = []
-        for patron_id, sequence in _TEST_BET_SEQUENCES.items():
-            bet_amount = sequence[(round_number - 1) % len(sequence)]
-            behavior_tags = (
-                ["Aggressive"] if ("S1" in patron_id or "S3" in patron_id) else ["Conservative"]
-            )
-            all_sessions.append(
-                {
+        profile_overrides: dict[str, dict[str, Any]] = {}
+        mode = "scripted"
+
+        if body.targetRuleIds:
+            # ----------------------------------------------------------
+            # Targeted mode: generate patrons tuned to trigger the chosen rules
+            # ----------------------------------------------------------
+            mode = "targeted"
+            rules = await db[cols.alert_rules].find(
+                {"ruleId": {"$in": body.targetRuleIds}}
+            ).to_list(length=None)
+
+            seen_patron_ids: set[str] = set()
+            for rule in rules:
+                conditions = rule.get("conditions") or []
+                for cond_idx, condition in enumerate(conditions):
+                    patron_id = _derive_targeted_patron_id(
+                        rule["ruleId"], table_id, cond_idx
+                    )
+                    session, p_override = _build_targeted_session_and_profile(
+                        condition, patron_id, table_id, min_bet, now
+                    )
+                    if patron_id not in seen_patron_ids:
+                        all_sessions.append(session)
+                        profile_overrides[patron_id] = p_override
+                        seen_patron_ids.add(patron_id)
+                    else:
+                        # Same patron targeted by multiple conditions —
+                        # merge: take the higher bet, merge tags
+                        existing = next(s for s in all_sessions if s["patronId"] == patron_id)
+                        if session["sessionBetAmount"] > existing["sessionBetAmount"]:
+                            existing["sessionBetAmount"] = session["sessionBetAmount"]
+                            existing["currentStackEstimate"] = session["currentStackEstimate"]
+                        existing_tags = set(existing.get("behaviorTags") or [])
+                        existing_tags.update(session.get("behaviorTags") or [])
+                        existing["behaviorTags"] = list(existing_tags)
+
+        else:
+            # ----------------------------------------------------------
+            # Default scripted mode: 5 deterministic + 4 random-bet patrons
+            # ----------------------------------------------------------
+            patron_ids = _derive_sim_patron_ids(table_id)
+
+            for i, spec in enumerate(_SCRIPTED_PROFILES):
+                patron_id = patron_ids[i]
+                sequence = _SCRIPTED_BET_SEQUENCES[i]
+                bet = float(sequence[(round_number - 1) % len(sequence)])
+                all_sessions.append({
                     "patronId": patron_id,
                     "tableId": table_id,
                     "seatedAt": now - timedelta(hours=1),
                     "lastActionAt": now,
-                    "sessionBetAmount": bet_amount,
-                    "currentStackEstimate": round(bet_amount * (1.5 + random.random())),
-                    "behaviorTags": behavior_tags,
+                    "sessionBetAmount": bet,
+                    "currentStackEstimate": round(bet * (1.5 + random.random())),
+                    "behaviorTags": spec["behaviorTags"],
                     "isActive": True,
+                })
+                profile_overrides[patron_id] = {
+                    "tier": spec["tier"],
+                    "adt": float(spec["adt"]),
+                    "riskFlags": spec["riskFlags"],
                 }
-            )
-        for i in range(1, 5):
-            bet = _random_bet(min_bet)
-            all_sessions.append(
-                {
-                    "patronId": f"SIM-RND-{str(i).zfill(3)}",
+
+            for i in range(4):
+                patron_id = patron_ids[5 + i]
+                bet = _random_bet(min_bet)
+                all_sessions.append({
+                    "patronId": patron_id,
                     "tableId": table_id,
                     "seatedAt": now - timedelta(minutes=45),
                     "lastActionAt": now,
-                    "sessionBetAmount": bet,
+                    "sessionBetAmount": float(bet),
                     "currentStackEstimate": round(bet * (1.2 + random.random() * 2)),
                     "behaviorTags": ["Aggressive"] if random.random() > 0.5 else ["Conservative"],
                     "isActive": True,
-                }
-            )
+                })
 
-        await _upsert_sim_patron_profiles(
-            db,
-            all_sessions,
-            str(table.get("gameType") or "Baccarat"),
-        )
+        # Upsert patron_profiles for all generated patrons
+        await _upsert_sim_patron_profiles(db, all_sessions, game_type, profile_overrides)
 
-        patron_ids = [s["patronId"] for s in all_sessions]
+        # Replace old sessions for these patrons at this table
+        patron_ids_all = [s["patronId"] for s in all_sessions]
         await db[cols.sessions].delete_many(
-            {"tableId": table_id, "patronId": {"$in": patron_ids}}
+            {"tableId": table_id, "patronId": {"$in": patron_ids_all}}
         )
         await db[cols.sessions].insert_many(all_sessions)
 
-        profiles = await db[cols.patrons].find(
-            {"patronId": {"$in": patron_ids}},
+        # Write round history snapshots (used by alert MQL executors)
+        profiles_cursor = await db[cols.patrons].find(
+            {"patronId": {"$in": patron_ids_all}},
             {"_id": 0, "patronId": 1, "adt": 1, "tier": 1, "maskedName": 1},
         ).to_list(length=None)
-        profile_map = {p["patronId"]: p for p in profiles}
+        profile_map = {p["patronId"]: p for p in profiles_cursor}
 
-        snapshots = []
+        snapshots: list[dict[str, Any]] = []
         for s in all_sessions:
             p = profile_map.get(s["patronId"], {})
-            snapshots.append(
-                {
-                    "tableId": table_id,
-                    "roundNumber": round_number,
-                    "patronId": s["patronId"],
-                    "betAmount": s["sessionBetAmount"],
-                    "adt": p.get("adt", 1000),
-                    "tier": p.get("tier", "Bronze"),
-                    "behaviorTags": s["behaviorTags"],
-                    "maskedName": p.get("maskedName", s["patronId"]),
-                    "recordedAt": now,
-                }
-            )
+            # Use override values for adt/tier if available (ensures alert MQL sees correct values)
+            override = profile_overrides.get(s["patronId"], {})
+            snapshots.append({
+                "tableId": table_id,
+                "roundNumber": round_number,
+                "patronId": s["patronId"],
+                "betAmount": s["sessionBetAmount"],
+                "adt": override.get("adt") or p.get("adt", 1000),
+                "tier": override.get("tier") or p.get("tier", "Bronze"),
+                "behaviorTags": s["behaviorTags"],
+                "maskedName": override.get("maskedName") or p.get("maskedName", s["patronId"]),
+                "recordedAt": now,
+            })
         if snapshots:
             await db[cols.table_round_history].insert_many(snapshots)
 
@@ -748,6 +861,7 @@ async def simulate_round(
         return ok_response(
             tableId=table_id,
             roundNumber=round_number,
+            mode=mode,
             sessionsInjected=len(all_sessions),
             alertsTriggered=alert_summary,
         )

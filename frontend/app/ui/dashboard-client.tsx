@@ -362,6 +362,16 @@ type SimGenPreview = {
   behaviorTags: string[];
 };
 
+type SimRoundHistory = {
+  tableId: string;
+  tableName: string;
+  roundNumber: number;
+  mode: "scripted" | "targeted";
+  sessionsInjected: number;
+  alertsTriggered: SimulateRoundResponse["alertsTriggered"];
+  ranAt: string;
+};
+
 const SIM_BEHAVIOR_TAGS = [
   "Aggressive",
   "Conservative",
@@ -546,6 +556,7 @@ type SimulateRoundResponse = {
   ok: boolean;
   tableId: string;
   roundNumber: number;
+  mode?: "scripted" | "targeted";
   sessionsInjected: number;
   alertsTriggered: Array<{
     alertId: string;
@@ -932,10 +943,7 @@ export default function DashboardClient() {
   const [rulePreview, setRulePreview] = useState<AlertRulePreview | null>(null);
   const [rulePreviewError, setRulePreviewError] = useState<string>("");
   const [ruleConfirming, setRuleConfirming] = useState<boolean>(false);
-  // Simulate Round state
-  const [roundNumbers, setRoundNumbers] = useState<Record<string, number>>({});
-  const [simulateRoundLoading, setSimulateRoundLoading] = useState<boolean>(false);
-  const [lastRoundResult, setLastRoundResult] = useState<SimulateRoundResponse | null>(null);
+  // Simulate Round state (moved to Simulate tab — see simRound* state below)
   // ---------- Patron Analysis state ----------
   const [analyzingAlertId, setAnalyzingAlertId] = useState<string | null>(null);
   const [expandedAnalysis, setExpandedAnalysis] = useState<Record<string, PatronAnalysisReport>>({});
@@ -951,6 +959,7 @@ export default function DashboardClient() {
   const [kpiResult, setKpiResult] = useState<KpiSearchResult | null>(null);
   const [kpiError, setKpiError] = useState<string>("");
   // ---------- Simulate tab state ----------
+  const [simTopMode, setSimTopMode] = useState<"session" | "round">("session");
   const [simMode, setSimMode] = useState<"update" | "new">("update");
   const [simTableId, setSimTableId] = useState<string>("");
   const [simTablePatrons, setSimTablePatrons] = useState<SimTablePatron[]>([]);
@@ -965,6 +974,12 @@ export default function DashboardClient() {
   const [simError, setSimError] = useState<string>("");
   const [simSuccess, setSimSuccess] = useState<string>("");
   const [simHistory, setSimHistory] = useState<SimHistory[]>([]);
+  // ---------- Round Simulation state (merged into Simulate tab) ----------
+  const [simRoundLoading, setSimRoundLoading] = useState<boolean>(false);
+  const [simRoundResult, setSimRoundResult] = useState<SimulateRoundResponse | null>(null);
+  const [simRoundHistory, setSimRoundHistory] = useState<SimRoundHistory[]>([]);
+  const [simTargetRuleIds, setSimTargetRuleIds] = useState<string[]>([]);
+  const [simRoundNumbers, setSimRoundNumbers] = useState<Record<string, number>>({});
 
   async function safeJson<T>(res: Response): Promise<T | null> {
     if (!res.ok) return null;
@@ -1758,21 +1773,44 @@ export default function DashboardClient() {
   }
 
   async function onSimulateRound() {
-    if (!selectedTableId || simulateRoundLoading) return;
-    setSimulateRoundLoading(true);
-    setLastRoundResult(null);
+    if (!simTableId || simRoundLoading) return;
+    setSimRoundLoading(true);
+    setSimRoundResult(null);
     try {
-      const res = await fetch(`/api/tables/${selectedTableId}/simulate-round`, {
+      const res = await fetch(`/api/tables/${simTableId}/simulate-round`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetRuleIds: simTargetRuleIds }),
       });
-      const data = (await res.json()) as SimulateRoundResponse;
+      const data = (await res.json()) as SimulateRoundResponse & { mode?: string };
       if (!data.ok) {
-        setError(data.error ?? "Failed to simulate round.");
+        setSimError(data.error ?? "Failed to simulate round.");
         return;
       }
-      setLastRoundResult(data);
-      setRoundNumbers((prev) => ({ ...prev, [selectedTableId]: data.roundNumber }));
+      setSimRoundResult(data);
+      setSimRoundNumbers((prev) => ({ ...prev, [simTableId]: data.roundNumber }));
+
+      // Add to round history (keep last 5)
+      const tableName = heatmap?.tables.find((t) => t.tableId === simTableId)?.tableName ?? simTableId;
+      const histEntry: SimRoundHistory = {
+        tableId: simTableId,
+        tableName,
+        roundNumber: data.roundNumber,
+        mode: (data.mode === "targeted" ? "targeted" : "scripted") as SimRoundHistory["mode"],
+        sessionsInjected: data.sessionsInjected,
+        alertsTriggered: data.alertsTriggered,
+        ranAt: new Date().toISOString(),
+      };
+      setSimRoundHistory((prev) => [histEntry, ...prev].slice(0, 5));
+
+      // Refresh patron list for Session tab (so injected patrons appear in dropdown)
+      fetch(`/api/simulate/tables/${simTableId}/patrons`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((d: { ok: boolean; patrons?: SimTablePatron[] }) => {
+          if (d.ok) setSimTablePatrons(d.patrons ?? []);
+        })
+        .catch(() => undefined);
+
       // Refresh alert feed if any alerts were triggered
       if (data.alertsTriggered.length > 0) {
         const alertRes = await fetch("/api/alerts?limit=50", { cache: "no-store" });
@@ -1791,9 +1829,9 @@ export default function DashboardClient() {
         if (rulesData.ok) setAlertRules(rulesData.rules ?? []);
       }
     } catch (err) {
-      setError((err as Error).message);
+      setSimError((err as Error).message);
     } finally {
-      setSimulateRoundLoading(false);
+      setSimRoundLoading(false);
     }
   }
 
@@ -2612,56 +2650,18 @@ export default function DashboardClient() {
                 ) : null}
           </section>
 
-          {/* ── Simulate Round + Alert Analysis ── */}
-          <section className="simulate-round-section" key={`simulate-round-${selectedTableId}`}>
-            <div className="simulate-round-header">
-              <span className="simulate-round-title">輪次模擬 {"&"} Alert 分析</span>
-              <span className="round-counter-badge">
-                Round #{roundNumbers[selectedTableId] ?? 0}
-              </span>
-            </div>
-            <p className="simulate-round-desc">
-              注入本輪確定性下注資料（含測試賭客），自動對所有 Active Alert 規則執行 MQL 分析。
-              
+          {/* Simulate Round moved to Simulate tab */}
+          <section className="simulate-round-section" style={{ padding: "12px 0 4px" }}>
+            <p className="simulate-round-desc" style={{ margin: 0, fontSize: "0.78rem", opacity: 0.65 }}>
+              輪次模擬已移至{" "}
+              <button
+                type="button"
+                style={{ background: "none", border: "none", color: "rgba(255,170,94,0.9)", cursor: "pointer", fontSize: "0.78rem", padding: 0, textDecoration: "underline" }}
+                onClick={() => setActiveSection("simulate")}
+              >
+                Simulate 分頁 →
+              </button>
             </p>
-            <button
-              className="simulate-round-btn"
-              type="button"
-              onClick={() => onSimulateRound().catch(() => undefined)}
-              disabled={!selectedTableId || simulateRoundLoading}
-            >
-              {simulateRoundLoading ? "分析中..." : "▶ Simulate Round"}
-            </button>
-            {lastRoundResult && lastRoundResult.tableId === selectedTableId ? (
-              <div className="simulate-round-result">
-                {lastRoundResult.alertsTriggered.length > 0 ? (
-                  <>
-                    <div>
-                      本輪注入 <strong>{lastRoundResult.sessionsInjected}</strong> 位賭客 ·
-                      觸發 <span className="triggered-count">{lastRoundResult.alertsTriggered.length} 條 Alert</span>
-                    </div>
-                    <div style={{ marginTop: 5 }}>
-                      {lastRoundResult.alertsTriggered.map((a) => (
-                        <div key={a.alertId} style={{ fontSize: "0.75rem", color: "rgba(255,170,94,0.85)", marginTop: 3 }}>
-                          · {a.ruleName}: {a.patronId} ({a.conditionTypes.join(", ")})
-                        </div>
-                      ))}
-                    </div>
-                    <button
-                      className="simulate-view-dashboard-btn"
-                      type="button"
-                      onClick={() => setActiveSection("alert-dashboard")}
-                    >
-                      查看 Alert Dashboard →
-                    </button>
-                  </>
-                ) : (
-                  <div className="no-trigger">
-                    本輪注入 {lastRoundResult.sessionsInjected} 位賭客 · 無 Alert 觸發
-                  </div>
-                )}
-              </div>
-            ) : null}
           </section>
 
           {tableAnalysis ? (
@@ -4048,12 +4048,30 @@ export default function DashboardClient() {
         {activeSection === "simulate" ? (
           <div className="section-stack">
             <article className="panel-card sim-panel">
-              <h2 className="panel-title">Simulate Patron Session</h2>
+              <h2 className="panel-title">Simulate</h2>
               <p className="sim-panel-desc">
-                Write to <code>patron_table_sessions</code> to test live heatmap updates in Patron Eyes. Changes reflect within 5 seconds.
+                Test live data flows — manually inject patron sessions or run a full round with alert-rule targeting.
               </p>
 
-              {/* Step 1: Select Table */}
+              {/* Top-level mode switcher: Session | Round Simulation */}
+              <div className="sim-mode-tabs" style={{ marginBottom: 18 }}>
+                <button
+                  type="button"
+                  className={`sim-mode-tab ${simTopMode === "session" ? "active" : ""}`}
+                  onClick={() => { setSimTopMode("session"); setSimError(""); setSimSuccess(""); setSimRoundResult(null); }}
+                >
+                  Session
+                </button>
+                <button
+                  type="button"
+                  className={`sim-mode-tab ${simTopMode === "round" ? "active" : ""}`}
+                  onClick={() => { setSimTopMode("round"); setSimError(""); setSimSuccess(""); }}
+                >
+                  Round Simulation
+                </button>
+              </div>
+
+              {/* ── Shared table selector ── */}
               <div className="sim-step">
                 <div className="sim-step-header">
                   <span className="sim-step-number">1</span>
@@ -4062,7 +4080,7 @@ export default function DashboardClient() {
                 <select
                   className="sim-select"
                   value={simTableId}
-                  onChange={(e) => setSimTableId(e.target.value)}
+                  onChange={(e) => { setSimTableId(e.target.value); setSimRoundResult(null); }}
                 >
                   <option value="">— Choose a table —</option>
                   {(heatmap?.tables ?? []).map((t) => (
@@ -4073,7 +4091,12 @@ export default function DashboardClient() {
                 </select>
               </div>
 
-              {/* Mode Tab Switcher */}
+              {/* ════════════════════════════════════════════
+                  SESSION MODE
+                  ════════════════════════════════════════════ */}
+              {simTopMode === "session" ? (
+                <>
+              {/* Sub-mode Tab Switcher */}
               <div className={`sim-mode-tabs ${!simTableId ? "sim-step-disabled" : ""}`}>
                 <button
                   type="button"
@@ -4342,50 +4365,273 @@ export default function DashboardClient() {
                 </>
               ) : null}
 
-            </article>
-
-            {/* Recent Simulations */}
-            {simHistory.length > 0 ? (
-              <article className="panel-card">
-                <h2 className="panel-title">Recent Simulations</h2>
-                <div className="sim-history-list">
-                  {simHistory.map((entry, idx) => (
-                    <div key={`sim-hist-${idx}`} className="sim-history-row">
-                      <div className="sim-history-action-badge" data-action={entry.action}>
-                        {entry.action === "inserted" ? "NEW" : "UPD"}
+              {/* Recent Session Simulations */}
+              {simHistory.length > 0 && simTopMode === "session" ? (
+                <div className="panel-card" style={{ marginTop: 16 }}>
+                  <h2 className="panel-title">Recent Session Simulations</h2>
+                  <div className="sim-history-list">
+                    {simHistory.map((entry, idx) => (
+                      <div key={`sim-hist-${idx}`} className="sim-history-row">
+                        <div className="sim-history-action-badge" data-action={entry.action}>
+                          {entry.action === "inserted" ? "NEW" : "UPD"}
+                        </div>
+                        <div className="sim-history-body">
+                          <div className="sim-history-head">
+                            <span className="sim-history-patron">{entry.patronId}</span>
+                            <span className="sim-history-arrow">→</span>
+                            <span className="sim-history-table">{entry.tableName}</span>
+                            <span className={`sim-history-status ${entry.isActive ? "is-active" : "is-inactive"}`}>
+                              {entry.isActive ? "Active" : "Inactive"}
+                            </span>
+                            {entry.mode === "new" ? (
+                              <span className="sim-history-mode-badge">auto-generated</span>
+                            ) : null}
+                          </div>
+                          <div className="sim-history-meta">
+                            <span>HKD {entry.sessionBetAmount.toLocaleString()} bet</span>
+                            <span>·</span>
+                            <span>Stack HKD {entry.currentStackEstimate.toLocaleString()}</span>
+                            {entry.behaviorTags.length > 0 ? (
+                              <>
+                                <span>·</span>
+                                <span>{entry.behaviorTags.join(", ")}</span>
+                              </>
+                            ) : null}
+                          </div>
+                          <div className="sim-history-time">
+                            {new Date(entry.updatedAt).toLocaleTimeString()}
+                          </div>
+                        </div>
                       </div>
-                      <div className="sim-history-body">
-                        <div className="sim-history-head">
-                          <span className="sim-history-patron">{entry.patronId}</span>
-                          <span className="sim-history-arrow">→</span>
-                          <span className="sim-history-table">{entry.tableName}</span>
-                          <span className={`sim-history-status ${entry.isActive ? "is-active" : "is-inactive"}`}>
-                            {entry.isActive ? "Active" : "Inactive"}
-                          </span>
-                          {entry.mode === "new" ? (
-                            <span className="sim-history-mode-badge">auto-generated</span>
-                          ) : null}
-                        </div>
-                        <div className="sim-history-meta">
-                          <span>HKD {entry.sessionBetAmount.toLocaleString()} bet</span>
-                          <span>·</span>
-                          <span>Stack HKD {entry.currentStackEstimate.toLocaleString()}</span>
-                          {entry.behaviorTags.length > 0 ? (
-                            <>
-                              <span>·</span>
-                              <span>{entry.behaviorTags.join(", ")}</span>
-                            </>
-                          ) : null}
-                        </div>
-                        <div className="sim-history-time">
-                          {new Date(entry.updatedAt).toLocaleTimeString()}
-                        </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </>
+            ) : null}
+
+              {/* ════════════════════════════════════════════
+                  ROUND SIMULATION MODE
+                  ════════════════════════════════════════════ */}
+              {simTopMode === "round" ? (
+                <>
+                  {/* Step 2: Target Alert Rules */}
+                  <div className={`sim-step ${!simTableId ? "sim-step-disabled" : ""}`}>
+                    <div className="sim-step-header">
+                      <span className="sim-step-number">2</span>
+                      <span className="sim-step-label">Target Alert Rules</span>
+                      <span className="sim-step-badge">optional</span>
+                    </div>
+                    <p className="sim-gen-desc" style={{ marginBottom: 10 }}>
+                      Select rules to generate patrons <strong>guaranteed to trigger</strong> the selected conditions.
+                      Leave all unchecked to use the default scripted sequences.
+                    </p>
+                    {alertRules.length === 0 ? (
+                      <p className="sim-empty-hint">No alert rules found. Create rules in the Alert Dashboard first.</p>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {alertRules.map((rule) => {
+                          const isSelected = simTargetRuleIds.includes(rule.ruleId);
+                          const isPaused = rule.status === "Paused";
+                          const condSummary = (rule.conditions ?? [])
+                            .map((c) => {
+                              const p = c.params ?? {};
+                              switch (c.type) {
+                                case "CONSECUTIVE_ROUNDS_BET_THRESHOLD":
+                                  return `連續${p.rounds ?? "?"}輪 > HKD ${Number(p.threshold ?? 0).toLocaleString()}`;
+                                case "CUMULATIVE_ROUNDS_BET_THRESHOLD":
+                                  return `${p.rounds ?? "?"}輪累計 > HKD ${Number(p.totalThreshold ?? 0).toLocaleString()}`;
+                                case "SINGLE_ROUND_ADT_MULTIPLIER":
+                                  return `ADT × ${p.multiplier ?? "?"}`;
+                                case "SESSION_BET_ABOVE":
+                                  return `Session > HKD ${Number(p.threshold ?? 0).toLocaleString()}`;
+                                case "TIER_MATCH":
+                                  return `Tier: ${(p.tiers as string[] | undefined)?.join(", ") ?? "?"}`;
+                                case "BEHAVIOR_TAG_MATCH":
+                                  return `Tags: ${(p.tags as string[] | undefined)?.join(", ") ?? "?"}`;
+                                default:
+                                  return c.type;
+                              }
+                            })
+                            .join(" · ");
+                          // Note for round-accumulation conditions
+                          const needsMultiRound = (rule.conditions ?? []).some(
+                            (c) =>
+                              c.type === "CONSECUTIVE_ROUNDS_BET_THRESHOLD" ||
+                              c.type === "CUMULATIVE_ROUNDS_BET_THRESHOLD"
+                          );
+                          return (
+                            <label
+                              key={rule.ruleId}
+                              style={{
+                                display: "flex",
+                                alignItems: "flex-start",
+                                gap: 10,
+                                padding: "10px 12px",
+                                borderRadius: 8,
+                                border: `1px solid ${isSelected ? "rgba(255,170,94,0.5)" : "rgba(255,255,255,0.08)"}`,
+                                background: isSelected ? "rgba(255,170,94,0.06)" : "rgba(255,255,255,0.02)",
+                                cursor: isPaused ? "not-allowed" : "pointer",
+                                opacity: isPaused ? 0.45 : 1,
+                                transition: "all 0.15s",
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                disabled={isPaused}
+                                checked={isSelected}
+                                style={{ marginTop: 2, accentColor: "rgba(255,170,94,0.9)", flexShrink: 0 }}
+                                onChange={() => {
+                                  if (isPaused) return;
+                                  setSimTargetRuleIds((prev) =>
+                                    prev.includes(rule.ruleId)
+                                      ? prev.filter((id) => id !== rule.ruleId)
+                                      : [...prev, rule.ruleId]
+                                  );
+                                }}
+                              />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                  <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>{rule.name}</span>
+                                  <span className={`analysis-badge ${isPaused ? "low" : "medium"}`} style={{ fontSize: "0.65rem" }}>
+                                    {isPaused ? "Paused" : "Active"}
+                                  </span>
+                                  {needsMultiRound && isSelected ? (
+                                    <span style={{ fontSize: "0.65rem", color: "rgba(255,170,94,0.7)", fontStyle: "italic" }}>
+                                      ⚠ requires N rounds
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <div style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.45)", marginTop: 3 }}>
+                                  {condSummary}
+                                </div>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {simTargetRuleIds.length > 0 ? (
+                      <button
+                        type="button"
+                        style={{ marginTop: 8, background: "none", border: "none", color: "rgba(255,255,255,0.35)", fontSize: "0.75rem", cursor: "pointer", padding: 0 }}
+                        onClick={() => setSimTargetRuleIds([])}
+                      >
+                        Clear selection
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {/* Step 3: Run */}
+                  <div className={`sim-step ${!simTableId ? "sim-step-disabled" : ""}`}>
+                    <div className="sim-step-header">
+                      <span className="sim-step-number">3</span>
+                      <span className="sim-step-label">Run Round</span>
+                      {simTableId ? (
+                        <span className="round-counter-badge" style={{ marginLeft: "auto" }}>
+                          Round #{simRoundNumbers[simTableId] ?? 0}
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="sim-gen-desc">
+                      {simTargetRuleIds.length > 0
+                        ? `Generates ${simTargetRuleIds.length} targeted patron(s) tuned to satisfy the selected rule conditions, then runs alert analysis.`
+                        : "Injects 9 scripted patrons with deterministic bet sequences, then runs alert analysis against all Active rules."}
+                    </p>
+
+                    {simError ? <div className="sim-feedback sim-feedback-error" style={{ marginBottom: 10 }}>{simError}</div> : null}
+
+                    <button
+                      className="simulate-round-btn"
+                      type="button"
+                      disabled={!simTableId || simRoundLoading}
+                      onClick={() => onSimulateRound().catch(() => undefined)}
+                    >
+                      {simRoundLoading ? "分析中..." : "▶ Simulate Round"}
+                    </button>
+
+                    {/* Result */}
+                    {simRoundResult && simRoundResult.tableId === simTableId ? (
+                      <div className="simulate-round-result" style={{ marginTop: 14 }}>
+                        {simRoundResult.alertsTriggered.length > 0 ? (
+                          <>
+                            <div>
+                              {simRoundResult.mode === "targeted" ? (
+                                <span style={{ fontSize: "0.75rem", color: "rgba(255,170,94,0.65)", marginRight: 6 }}>[targeted]</span>
+                              ) : null}
+                              Injected <strong>{simRoundResult.sessionsInjected}</strong> patron(s) ·{" "}
+                              <span className="triggered-count">{simRoundResult.alertsTriggered.length} Alert(s) triggered</span>
+                            </div>
+                            <div style={{ marginTop: 6 }}>
+                              {simRoundResult.alertsTriggered.map((a) => (
+                                <div key={a.alertId} style={{ fontSize: "0.75rem", color: "rgba(255,170,94,0.85)", marginTop: 3 }}>
+                                  · {a.ruleName}: {a.patronId} ({a.conditionTypes.join(", ")})
+                                </div>
+                              ))}
+                            </div>
+                            <button
+                              className="simulate-view-dashboard-btn"
+                              type="button"
+                              onClick={() => setActiveSection("alert-dashboard")}
+                            >
+                              查看 Alert Dashboard →
+                            </button>
+                          </>
+                        ) : (
+                          <div className="no-trigger">
+                            {simRoundResult.mode === "targeted" ? (
+                              <span style={{ fontSize: "0.75rem", color: "rgba(255,170,94,0.65)", marginRight: 6 }}>[targeted]</span>
+                            ) : null}
+                            Injected {simRoundResult.sessionsInjected} patron(s) · No alerts triggered
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {/* Round History */}
+                  {simRoundHistory.length > 0 ? (
+                    <div style={{ marginTop: 8 }}>
+                      <div style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.35)", marginBottom: 6, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                        Round History
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {simRoundHistory.map((h, idx) => (
+                          <div
+                            key={`rh-${idx}`}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                              padding: "7px 10px",
+                              borderRadius: 6,
+                              background: "rgba(255,255,255,0.03)",
+                              fontSize: "0.78rem",
+                            }}
+                          >
+                            <span style={{ color: "rgba(255,255,255,0.4)", minWidth: 60 }}>Round #{h.roundNumber}</span>
+                            <span style={{ color: "rgba(255,255,255,0.6)" }}>{h.tableName}</span>
+                            <span className={`sim-history-mode-badge`} style={{ fontSize: "0.65rem" }}>{h.mode}</span>
+                            <span style={{ color: "rgba(255,255,255,0.4)" }}>{h.sessionsInjected} patrons</span>
+                            {h.alertsTriggered.length > 0 ? (
+                              <span className="triggered-count" style={{ fontSize: "0.72rem" }}>
+                                {h.alertsTriggered.length} alert{h.alertsTriggered.length !== 1 ? "s" : ""}
+                              </span>
+                            ) : (
+                              <span style={{ color: "rgba(255,255,255,0.25)", fontSize: "0.72rem" }}>no alerts</span>
+                            )}
+                            <span style={{ marginLeft: "auto", color: "rgba(255,255,255,0.25)" }}>
+                              {new Date(h.ranAt).toLocaleTimeString()}
+                            </span>
+                          </div>
+                        ))}
                       </div>
                     </div>
-                  ))}
-                </div>
-              </article>
-            ) : null}
+                  ) : null}
+                </>
+              ) : null}
+
+            </article>
 
           </div>
         ) : null}
