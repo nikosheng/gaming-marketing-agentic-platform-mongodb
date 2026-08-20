@@ -367,7 +367,6 @@ cp .env.example .env
 | `NEXT_PUBLIC_BACKEND_URL` | No | `http://localhost:8000` | Frontend proxy target for `/api/*`. Docker overrides to `http://backend:8000`. |
 | `MONGODB_URI` | Yes | — | MongoDB connection string. Docker overrides to `mongodb://mongodb:27017/?directConnection=true`. |
 | `MONGODB_DB` | No | `casino_marketing_demo` | Database name |
-| `MONGODB_TLS_INSECURE` | No | `false` | Disables TLS cert + hostname verification (dev-only) |
 | `LITELLM_BASE_URL` | Yes* | `http://localhost:4000` | LiteLLM gateway URL. Docker overrides to `http://litellm:4000`. |
 | `LITELLM_API_KEY` | Yes* | — | LiteLLM master key (Bearer token; must match `LITELLM_MASTER_KEY`) |
 | `LITELLM_MASTER_KEY` | Yes* | — | LiteLLM container master key |
