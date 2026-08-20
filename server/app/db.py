@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+import certifi
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo.server_api import ServerApi
 
@@ -24,21 +25,16 @@ def get_client() -> AsyncIOMotorClient:
     if not settings.mongodb_uri:
         raise RuntimeError("Missing required env var: MONGODB_URI")
 
+    # TLS is auto-enabled by the URI scheme (mongodb+srv:// → TLS on,
+    # mongodb:// → TLS off). Only supply a CA bundle when SRV / TLS is
+    # actually in use; passing tlsCAFile with a plain mongodb:// URI forces
+    # TLS on even for local non-TLS instances (e.g. Docker Atlas Local).
+    use_tls = settings.mongodb_uri.startswith("mongodb+srv://")
     client_kwargs: dict[str, object] = {
-        "server_api": ServerApi("1", strict=False, deprecation_errors=True)
+        "server_api": ServerApi("1", strict=False, deprecation_errors=True),
     }
-    if settings.mongodb_tls_insecure:
-        # Convenience switch to bypass TLS certificate and hostname validation.
-        client_kwargs["tls"] = True
-        client_kwargs["tlsAllowInvalidCertificates"] = True
-        client_kwargs["tlsAllowInvalidHostnames"] = True
-    else:
-        if settings.mongodb_tls_allow_invalid_certificates:
-            client_kwargs["tls"] = True
-            client_kwargs["tlsAllowInvalidCertificates"] = True
-        if settings.mongodb_tls_allow_invalid_hostnames:
-            client_kwargs["tls"] = True
-            client_kwargs["tlsAllowInvalidHostnames"] = True
+    if use_tls:
+        client_kwargs["tlsCAFile"] = certifi.where()
 
     _client = AsyncIOMotorClient(
         settings.mongodb_uri,
