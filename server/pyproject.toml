@@ -17,6 +17,7 @@ dependencies = [
     "langgraph>=0.2.60",
     "langchain-core>=0.3.20",
     "langgraph-checkpoint-mongodb>=0.1.0",
+    "certifi>=2024.0",
     "python-dotenv>=1.0",
     "faker>=33.0",
     "orjson>=3.10",

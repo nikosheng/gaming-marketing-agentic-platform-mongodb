@@ -64,6 +64,7 @@ services:
   mongo-restore:
     image: mongodb/mongodb-atlas-local:latest
     container_name: mgm-mongo-restore
+    user: root
     restart: "no"
     depends_on:
       mongodb:
@@ -71,22 +72,15 @@ services:
     volumes:
       - ./dump:/dump:ro
       - mongo-restore-sentinel:/sentinel
-    entrypoint: >
-      bash -c "
+    entrypoint: >-
+      bash -c '
         if [ -f /sentinel/.restored ]; then
-          echo '[restore] Already restored, skipping.';
+          echo "[restore] Already restored, skipping.";
           exit 0;
         fi;
-        echo '[restore] Running mongorestore for casino_marketing_demo...';
-        mongorestore
-          --host mgm-mongodb
-          --port 27017
-          --db casino_marketing_demo
-          --drop
-          /dump/casino_marketing_demo
-        && touch /sentinel/.restored
-        && echo '[restore] Done.'
-      "
+        echo "[restore] Running mongorestore for casino_marketing_demo...";
+        mongorestore --host mgm-mongodb --port 27017 --db casino_marketing_demo --drop /dump/casino_marketing_demo && touch /sentinel/.restored && echo "[restore] Done."
+      '
     networks:
       - app-net
 
