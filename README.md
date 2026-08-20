@@ -1,6 +1,8 @@
 # Macau Gaming Marketing AI Platform
 
-A full-stack Management Console for casino marketing operations, built with Next.js, MongoDB Atlas, Voyage AI, and Azure OpenAI. The platform combines real-time table monitoring, AI-driven patron analysis, alert automation, and PR performance management into a single operator interface.
+A full-stack Management Console for casino marketing operations. The frontend is a **Next.js** app under [`frontend/`](frontend/), the backend is a **Python FastAPI** service under [`server/`](server/), and the AI stack uses **Voyage AI `voyage-4-nano` (local, in-process)** for embeddings and **Azure OpenAI (via LiteLLM)** for chat. The platform combines real-time table monitoring, AI-driven patron analysis, alert automation, and PR performance management into a single operator interface.
+
+> **Migration note (2026-08):** the former Next.js API routes and TypeScript agents were replaced by a Python service. See [`server/README.md`](server/README.md).
 
 ---
 
@@ -40,42 +42,25 @@ The platform is designed around a single-page **Management Console** with five f
 | Alert rationale generation | Azure OpenAI | Alert Feed cards |
 | Patron history analysis | Azure OpenAI | Alert Card "分析賭客" |
 | PR KPI management insight | Azure OpenAI | PR Efficiency KPI search |
-| Interaction semantic embedding | Voyage AI `voyage-4` | patron_interaction_history |
-| Patron preference embedding | Voyage AI `voyage-4` | patron_profiles |
-| Offer content embedding | Voyage AI `voyage-4` | offer_catalog |
+| Interaction semantic embedding | Voyage AI `voyage-4-nano` (local) | patron_interaction_history |
+| Patron preference embedding | Voyage AI `voyage-4-nano` (local) | patron_profiles |
+| Offer content embedding | Voyage AI `voyage-4-nano` (local) | offer_catalog |
 | KPI vector search | MongoDB Atlas Vector Search | PR Efficiency |
 | Offer–patron matching | MongoDB Atlas Vector Search | Offer Catalog |
-| Risk + AML workflow | LangGraph (LangChain) | Patron Insight |
-| Offer generation | LangGraph (LangChain) | Offer Catalog |
-
-**Data lifecycle for PR Efficiency:**
-
-```
-Public Relations Agent
-  └── records interaction in Alert Card or Patron Detail page
-       └── POST /api/patrons/:patronId/interactions
-            ├── saves to patron_interaction_history
-            └── Voyage AI → interactionEmbedding (1024-dim)
-
-Management
-  └── opens PR Efficiency tab
-       ├── views PR Metrics grid (aggregated from interaction_history)
-       └── runs KPI vector search
-            ├── Voyage AI → query embedding
-            ├── $vectorSearch → top-300 semantically similar records
-            ├── group by recordedBy → per-PR achievement rate
-            └── Azure OpenAI → ranked insight + action recommendations
-```
+| Risk + AML workflow | LangGraph (Python) | Patron Insight |
+| Offer generation | LangGraph (Python) | Offer Catalog |
 
 ---
 
 ## Table of Contents
 
+- [Repository Structure](#repository-structure)
 - [Features](#features)
 - [Architecture Overview](#architecture-overview)
 - [Tech Stack](#tech-stack)
+- [Quick Start — Docker (Recommended)](#quick-start--docker-recommended)
+- [Quick Start — Local Development](#quick-start--local-development)
 - [Environment Variables](#environment-variables)
-- [Install & Run](#install--run)
 - [Console Sections](#console-sections)
   - [Patron Eyes](#1-patron-eyes)
   - [Offer Catalog](#2-offer-catalog)
@@ -86,6 +71,55 @@ Management
 - [MongoDB Collections](#mongodb-collections)
 - [Data Flow Diagrams](#data-flow-diagrams)
 - [Scripts](#scripts)
+
+---
+
+## Repository Structure
+
+```
+gaming-marketing-agentic-platform-mongodb/
+├── frontend/                   # Next.js 16 frontend (App Router, React 19)
+│   ├── app/                    # Next.js app directory
+│   │   ├── globals.css         # Dark-theme design system (~5200 lines)
+│   │   ├── layout.tsx          # Root layout
+│   │   ├── page.tsx            # Root page → <DashboardClient />
+│   │   ├── ui/
+│   │   │   └── dashboard-client.tsx   # Main 5-section SPA component
+│   │   └── patron-detail/
+│   │       └── [patronId]/
+│   │           ├── page.tsx
+│   │           └── patron-detail-client.tsx
+│   ├── Dockerfile              # Multi-stage standalone build
+│   ├── .dockerignore
+│   ├── next.config.mjs         # output: 'standalone', /api/* rewrite
+│   ├── package.json
+│   ├── package-lock.json
+│   └── tsconfig.json
+│
+├── server/                     # Python FastAPI backend
+│   ├── app/
+│   │   ├── main.py             # FastAPI app factory + lifespan
+│   │   ├── config.py           # pydantic-settings (Settings + LlmSettings)
+│   │   ├── db.py               # Motor AsyncIOMotorClient singleton
+│   │   ├── agents/             # 9 LangGraph / async agents
+│   │   ├── routers/            # 8 HTTP router modules (/api/*)
+│   │   ├── schemas/            # Pydantic v2 domain models
+│   │   ├── llm/                # LiteLLM chat + Voyage AI embeddings
+│   │   ├── seed/               # Database seeding scripts
+│   │   └── scripts/            # Backfill, migration, diagnostic scripts
+│   ├── Dockerfile              # Python 3.11-slim + uv
+│   ├── .dockerignore
+│   ├── pyproject.toml
+│   └── uv.lock
+│
+├── infra/
+│   └── litellm/
+│       └── config.yaml         # LiteLLM routing: chat-primary → Azure OpenAI
+│
+├── docker-compose.yml          # Unified stack (mongodb, redis, litellm, backend, frontend)
+├── .env.example                # Environment variable template
+└── docs/                       # Technical design documents
+```
 
 ---
 
@@ -107,8 +141,8 @@ Management
 ## Architecture Overview
 
 ```
-Browser (Next.js App Router)
-  └── Management Console (dashboard-client.tsx)
+Browser (Next.js App Router, frontend/)
+  └── Management Console (frontend/app/ui/dashboard-client.tsx)
        ├── Patron Eyes        → /api/tables/*
        ├── Offer Catalog      → /api/offers/*
        ├── Patron Insight     → /api/patrons/*/risk-case
@@ -117,28 +151,44 @@ Browser (Next.js App Router)
        │         ├── [分析賭客]   → /api/alerts/[alertId]/analyze-patron
        │         └── [記錄互動]   → /api/patrons/[patronId]/interactions
        └── PR Efficiency      → /api/pr-efficiency/*
+              │
+              │  next.config.mjs rewrites /api/* → NEXT_PUBLIC_BACKEND_URL
+              ▼
+Python backend (server/app, FastAPI + Motor + LangGraph)
+  ├── routers/          — 8 HTTP router modules, one per /api/* segment
+  ├── agents/
+  │    ├── alert_rule_agent.py       — NL → condition catalog (LangGraph)
+  │    ├── alert_analyzer.py         — MQL executors + LLM rationale
+  │    ├── patron_profile_agent.py   — Patron history LLM analysis
+  │    ├── pr_efficiency_agent.py    — PR metrics aggregation + KPI vector search
+  │    ├── minbet_optimizer_agent.py — Min-bet recommendation (LangGraph)
+  │    ├── offer_agent.py            — Offer generation (LangGraph)
+  │    ├── table_drilldown_agent.py  — Table patron scoring (LangGraph)
+  │    ├── risk_case_agent.py        — Risk workflow + PR assignment
+  │    └── condition_catalog.py      — Alert-condition catalog constants
+  ├── llm/
+  │    ├── gateway.py     — chat_text() / chat_json() → LiteLLM (Azure OpenAI)
+  │    └── embeddings.py  — voyageai[local] voyage-4-nano, 1024-dim, in-process
+  ├── schemas/            — Pydantic v2 domain models (patrons, offers, ...)
+  ├── db.py               — AsyncIOMotorClient singleton
+  └── main.py             — FastAPI factory + lifespan (voyage warm-up + Mongo ping)
 
 Patron Detail Page (/patron-detail/[patronId])
   ├── Interaction History timeline
   ├── Add interaction form
   └── Analysis reports (Acknowledged / Actioned)
 
-Server-side Agents (src/web/)
-  ├── alert-rule-agent.ts        — NL → condition catalog (Azure OpenAI)
-  ├── alert-analyzer.ts          — MQL executors + LLM rationale
-  ├── patron-profile-agent.ts    — Patron history LLM analysis
-  ├── pr-efficiency-agent.ts     — PR metrics aggregation + KPI vector search
-  ├── embedding.ts               — Shared Voyage AI embedding (document / query)
-  ├── minbet-optimizer-agent.ts  — Min-bet recommendation
-  ├── offer-agent.ts             — Offer generation (LangGraph)
-  └── risk-case-agent.ts         — Risk workflow (LangGraph)
-
-MongoDB Atlas
+MongoDB Atlas Local (docker-compose: mongodb/mongodb-atlas-local)
   ├── Standard indexes (unique, compound, TTL)
   └── Vector Search indexes
        ├── patron_preference_vector_idx  (patron_profiles.preferenceEmbedding)
        ├── offer_vector_idx              (offer_catalog.offerEmbedding)
        └── interaction_embedding_idx     (patron_interaction_history.interactionEmbedding)
+
+LLM stack (docker-compose.yml)
+  ├── LiteLLM :4000  ── chat only (Azure OpenAI, OpenAI fallback slot)
+  └── Redis    :6379 ── LiteLLM response cache
+  (Voyage embeddings run in-process inside the Python backend, no separate container)
 ```
 
 ---
@@ -147,69 +197,212 @@ MongoDB Atlas
 
 | Layer | Technology |
 |---|---|
-| Frontend | Next.js 15 (App Router) · React · TypeScript |
-| Database | MongoDB Atlas (`mongodb` native driver) |
+| Frontend | Next.js 16 (App Router, `output: 'standalone'`) · React 19 · TypeScript |
+| Backend | Python 3.11+ · FastAPI · Motor (async MongoDB) · Pydantic v2 |
+| Database | MongoDB Atlas Local (`mongodb/mongodb-atlas-local`) · Motor async driver |
 | Vector Search | MongoDB Atlas Vector Search (cosine, 1024-dim) |
-| Embeddings | Voyage AI `voyage-4` (document + query modes) |
-| LLM | Azure OpenAI `gpt-5.4-mini-2` (`max_completion_tokens`, `response_format: json_object`) |
-| Agent Framework | LangGraph (`@langchain/langgraph`) |
-| Runtime | Node.js 20+ |
+| Embeddings | Voyage AI `voyage-4-nano` (local, `voyageai[local]` in-process) |
+| Chat LLM | Azure OpenAI `gpt-5.4-mini-2` via LiteLLM gateway |
+| Agent Framework | LangGraph (Python) · `langgraph-checkpoint-mongodb` |
+| Package manager | `uv` (Python) · `npm` (frontend) |
+| Containerisation | Docker · Docker Compose |
+
+---
+
+## Quick Start — Docker (Recommended)
+
+The entire platform runs as a single `docker compose up`. All five services — MongoDB Atlas Local, Redis, LiteLLM, the Python backend, and the Next.js frontend — are orchestrated together.
+
+### Prerequisites
+
+- Docker Desktop (or Docker Engine + Docker Compose v2)
+- Azure OpenAI resource with a deployed model (for chat features)
+
+### 1. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and fill in the required secrets:
+
+```bash
+# Azure OpenAI (required for chat features)
+AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com/
+AZURE_OPENAI_API_KEY=<your-key>
+LITELLM_MASTER_KEY=sk-litellm-change-me   # shared between LiteLLM and the backend
+LITELLM_API_KEY=sk-litellm-change-me      # must match LITELLM_MASTER_KEY
+```
+
+> **Note:** `MONGODB_URI` and `LITELLM_BASE_URL` in `.env` are for local dev only.
+> `docker-compose.yml` overrides them automatically with the internal Docker service names
+> (`mongodb://mongodb:27017/...` and `http://litellm:4000`).
+
+### 2. Start the stack
+
+```bash
+docker compose up --build
+```
+
+First run will:
+- Pull `mongodb/mongodb-atlas-local`, `redis:7-alpine`, `ghcr.io/berriai/litellm:main-stable`
+- Build the `backend` and `frontend` images
+- Download ~700 MB of Voyage AI `voyage-4-nano` model weights into the `voyage-model-cache` volume (once only; cached on subsequent starts)
+
+Services and ports:
+
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:3000 |
+| Backend API | http://localhost:8000 |
+| LiteLLM gateway | http://localhost:4000 |
+| MongoDB | localhost:27017 |
+
+### 3. Seed the database
+
+After all services are healthy, seed MongoDB with demo data:
+
+```bash
+# Base collections — patrons, tables, offers, PR agents (destructive)
+docker compose exec backend uv run python -m app.seed.seed
+
+# PR interaction history — ~300 records (additive)
+docker compose exec backend uv run python -m app.seed.seed_interactions
+
+# Generate Voyage AI embeddings for patrons, offers, and interactions
+docker compose exec backend uv run python -m app.scripts.backfill_embeddings
+docker compose exec backend uv run python -m app.scripts.backfill_interaction_embeddings
+```
+
+### 4. Open the console
+
+Navigate to **http://localhost:3000**.
+
+### Useful compose commands
+
+```bash
+docker compose up --build          # build and start all services
+docker compose up -d               # start in background
+docker compose down                # stop and remove containers
+docker compose down -v             # stop and remove containers + volumes (resets DB + model cache)
+docker compose logs -f             # tail all service logs
+docker compose logs -f backend     # tail backend logs only
+docker compose ps                  # show service status
+```
+
+### Database restore (mongo-restore service)
+
+On first `docker compose up`, the `mongo-restore` service automatically restores the `casino_marketing_demo` database from the `dump/` directory into the local MongoDB Atlas container. It runs once and exits — subsequent starts detect the sentinel file and skip the restore immediately.
+
+To **force a full re-restore** (e.g. after pulling updated dump data):
+
+```bash
+# 1. Remove the sentinel volume so mongo-restore treats the next run as a fresh init
+docker volume rm mgm-platform_mongo-restore-sentinel
+
+# 2. Optionally wipe the database volume too (clean slate)
+docker volume rm mgm-platform_mongo-data
+
+# 3. Restart the stack — mongo-restore will run again automatically
+docker compose up
+```
+
+To **monitor the restore progress** on first boot:
+
+```bash
+docker compose logs -f mongo-restore
+```
+
+---
+
+## Quick Start — Local Development
+
+Run the frontend and backend directly on your machine (no Docker). You still need MongoDB and LiteLLM accessible; point the env vars at your own instances.
+
+### Backend
+
+```bash
+cd server
+uv sync                                          # install Python deps
+uv run uvicorn app.main:app --reload --port 8000
+```
+
+Seed and backfill (in a second terminal, from `server/`):
+
+```bash
+uv run python -m app.seed.seed
+uv run python -m app.seed.seed_interactions
+uv run python -m app.scripts.backfill_embeddings
+uv run python -m app.scripts.backfill_interaction_embeddings
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev              # http://localhost:3000 → proxies /api/* to :8000
+```
+
+Production build:
+
+```bash
+npm run build && npm run start
+```
 
 ---
 
 ## Environment Variables
 
-Copy the example file and fill in your credentials:
+Copy `.env.example` to `.env` at the repo root and fill in your credentials.
+The same `.env` is read by both Docker Compose and the Python backend
+(`pydantic-settings` with `env_file=".env"`).
 
 ```bash
-cp .env.example .env.local
+cp .env.example .env
 ```
 
-| Variable | Required | Description |
-|---|---|---|
-| `MONGODB_URI` | Yes | MongoDB Atlas connection string |
-| `MONGODB_DB` | No | Database name (default: `casino_marketing_demo`) |
-| `AZURE_OPENAI_ENDPOINT` | Yes* | Azure OpenAI endpoint URL |
-| `AZURE_OPENAI_API_KEY` | Yes* | Azure OpenAI API key |
-| `AZURE_OPENAI_DEPLOYMENT` | No | Deployment name (default: `gpt-4o-mini`) |
-| `AZURE_OPENAI_API_VERSION` | No | API version (default: `2024-08-01-preview`) |
-| `VOYAGE_API_KEY` | Yes** | Voyage AI API key for embeddings |
-| `VECTOR_EMBEDDING_DIM` | No | Embedding dimension (default: `1024`) |
-| `SEED_PATRON_COUNT` | No | Number of patrons to seed (default: `300`) |
-| `SEED_TABLE_COUNT` | No | Number of tables to seed (default: `30`) |
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `NEXT_PUBLIC_BACKEND_URL` | No | `http://localhost:8000` | Frontend proxy target for `/api/*`. Docker overrides to `http://backend:8000`. |
+| `MONGODB_URI` | Yes | — | MongoDB connection string. Docker overrides to `mongodb://mongodb:27017/?directConnection=true`. |
+| `MONGODB_DB` | No | `casino_marketing_demo` | Database name |
+| `LITELLM_BASE_URL` | Yes* | `http://localhost:4000` | LiteLLM gateway URL. Docker overrides to `http://litellm:4000`. |
+| `LITELLM_API_KEY` | Yes* | — | LiteLLM master key (Bearer token; must match `LITELLM_MASTER_KEY`) |
+| `LITELLM_MASTER_KEY` | Yes* | — | LiteLLM container master key |
+| `LLM_CHAT_MODEL` | No | `chat-primary` | Chat model alias in LiteLLM |
+| `AZURE_OPENAI_ENDPOINT` | Yes* | — | Azure OpenAI endpoint URL |
+| `AZURE_OPENAI_API_KEY` | Yes* | — | Azure OpenAI API key |
+| `AZURE_OPENAI_API_VERSION` | No | `2024-12-01-preview` | Azure OpenAI API version |
+| `LLM_EMBEDDING_MODEL` | No | `voyage-4-nano` | Voyage model name |
+| `VECTOR_EMBEDDING_DIM` | No | `1024` | Embedding dimension |
+| `VOYAGE_API_KEY` | No | — | Only needed for the hosted Voyage API fallback |
+| `EMBED_WARMUP_ON_START` | No | `true` | Preload voyage weights during FastAPI lifespan |
+| `SEED_PATRON_COUNT` | No | `300` | Number of patrons to seed |
+| `SEED_TABLE_COUNT` | No | `30` | Number of tables to seed |
 
-\* Required for Alert Dashboard AI rationale, Patron Analysis, and PR Efficiency KPI insight.  
-\*\* Required for PR Efficiency KPI vector search and interaction embedding generation.
+\* Required for chat-driven features (Alert Dashboard AI rationale, Patron Analysis, PR Efficiency KPI insight, Offer NL parsing). Embeddings do **not** go through LiteLLM — the backend calls `voyageai[local]` in-process.
 
 ---
 
-## Install & Run
+## LLM Stack
+
+Two independent pieces:
+
+1. **Chat** — a **LiteLLM** gateway fronts Azure OpenAI. Runs as the `litellm` service in `docker-compose.yml` (alongside Redis for response caching).
+2. **Embeddings** — the Python backend calls the `voyageai[local]` SDK in-process; no external service. First call downloads ~700 MB of `voyage-4-nano` weights into the `voyage-model-cache` Docker volume. Subsequent starts are instant.
+
+Smoke test (verify chat + embedding end-to-end):
 
 ```bash
-npm install
+# Docker
+docker compose exec backend uv run python -m app.smoke.gateway_smoke
 
-# 1. Seed all base collections (patrons, tables, offers, PR agents, risk cases…)
-#    WARNING: destructive — clears and reloads all seeded collections
-npm run seed
-
-# 2. Seed simulated PR interaction records for PR Efficiency demo
-#    Additive — does NOT clear existing data
-#    Generates ~300–350 records across 24 PR agents with realistic type distribution
-npm run seed:interactions
-
-# 3. Backfill Voyage AI embeddings
-#    (a) Offers + patron profiles — required for Offer Catalog vector matching
-npm run backfill
-#    (b) Interaction records — required for PR Efficiency KPI vector search
-#        ~341 records × 21s delay = ~2 hours (Voyage AI 3 RPM rate limit)
-npm run backfill:interactions
-
-# 4. Start development server
-npm run dev
-
-# Production build
-npm run build && npm run start
+# Local dev (from server/)
+uv run python -m app.smoke.gateway_smoke
 ```
+
+Full details: [`docs/llm-gateway.md`](docs/llm-gateway.md)
 
 ---
 
@@ -273,7 +466,7 @@ Each alert card shows triggered conditions, evidence, ADT, behavior tags, and an
 Alert card actions:
 - **Resolve** — clears all alerts for the patron so they can be re-triggered fresh
 - **+ 記錄互動** — inline form to log a PR interaction (room comp, F&B, rebate, outreach, etc.) directly from the alert
-- **分析賭客** — calls the Patron Profile Agent to analyze interaction history and generate next-action recommendations (see below)
+- **分析賭客** — calls the Patron Profile Agent to analyze interaction history and generate next-action recommendations
 
 **Patron Profile Analysis** (triggered from Alert Card)
 
@@ -332,7 +525,7 @@ Management selects a KPI from pre-defined templates or enters free text:
 
 ```
 KPI text (free text or template)
-  → Voyage AI voyage-4 query embedding (1024-dim)
+  → voyageai[local] voyage-4-nano query embedding (1024-dim, in-process)
   → $vectorSearch on patron_interaction_history
       index: interaction_embedding_idx
       limit: 300, numCandidates: 600
@@ -344,7 +537,7 @@ KPI text (free text or template)
       kpiAchievementRate — matchedCount / totalInteractions
       matchedSamples     — top 3 matching records (type + date + score)
   → Sort by kpiAchievementRate desc
-  → Azure OpenAI LLM → JSON management insight (繁體中文):
+  → Azure OpenAI (via LiteLLM) → JSON management insight (繁體中文):
       insight  — 2-3 sentences comparing PRs, naming best and weakest
       actions  — 3 concrete management action items
 ```
@@ -358,33 +551,14 @@ KPI text (free text or template)
 
 #### Interaction Embedding
 
-Every interaction record written via `POST /api/patrons/[patronId]/interactions` automatically generates a Voyage AI `document` embedding from a structured Chinese description of the interaction. This embedding is stored in `interactionEmbedding` and indexed by the Atlas Vector Search index `interaction_embedding_idx`.
+Every interaction record written via `POST /api/patrons/[patronId]/interactions` automatically generates a Voyage AI `document` embedding from a structured Chinese description of the interaction, produced in-process by `voyageai[local]` (`voyage-4-nano`, 1024-dim). The vector is stored in `interactionEmbedding` and indexed by the Atlas Vector Search index `interaction_embedding_idx`.
 
 Example embedding text generated for a ROOM_COMP record:
 ```
 為 Platinum 等級賭客安排免費房間住宿，房型：Superior Suite，2晚，價值 HKD 12,000，日期 2026-07-01
 ```
 
-If the Voyage API key is missing or the API call fails, the record is still saved without an embedding (graceful degradation).
-
-#### Demo Data Setup
-
-Run `npm run seed:interactions` to populate `patron_interaction_history` with ~300–350 simulated records. The script reads live PR agents and patrons from MongoDB — no hardcoded IDs.
-
-PR agents are split into 4 groups by sorted `prAgentId` order, each with a distinct interaction type distribution designed to produce meaningful differences in KPI vector search results:
-
-| Group | PRs (approx.) | Dominant types | KPI search profile |
-|---|---|---|---|
-| A — Hosting | First quarter | `ROOM_COMP` 40%, `TRANSFER` 30% | Scores high on room/accommodation KPIs |
-| B — Retention | Second quarter | `OUTREACH` 40%, `EVENT_INVITE` 30% | Scores high on contact/event KPIs |
-| C — Reward | Third quarter | `REBATE` 35%, `FB_COMP` 30% | Scores high on comp/rebate KPIs |
-| D — Generalist | Final quarter | All types ~17% each | Moderate score across all KPIs |
-
-Each PR receives 8–20 records scattered randomly across the past 180 days. Run `npm run seed:interactions:dry` to preview counts without writing.
-
-After seeding, run `npm run backfill:interactions` to generate embeddings. Until embeddings are filled, the KPI vector search will return empty results (the metrics grid is unaffected).
-
-> Full technical documentation: [docs/pr-efficiency.md](docs/pr-efficiency.md)
+If the voyage local model fails to load (or returns an unexpected shape), the record is still saved without an embedding (graceful degradation via zero-vector detection).
 
 ---
 
@@ -494,10 +668,10 @@ After seeding, run `npm run backfill:interactions` to generate embeddings. Until
 
 ```
 Simulate Round (POST /api/tables/:tableId/simulate-round)
-  └── runAlertAnalysis()
+  └── run_alert_analysis()  [server/app/agents/alert_analyzer.py]
        ├── 6 MQL executors (one per ConditionType)
        ├── Batch patron profile lookup
-       └── generateAlertRationale() → Azure OpenAI (≤50 chars)
+       └── generate_alert_rationale() → Azure OpenAI (≤50 chars)
             ↓
        PatronAlert inserted into patron_alerts (30-day TTL)
             ↓
@@ -505,12 +679,12 @@ Alert Feed → Alert Card displayed in management console
   ├── [+ 記錄互動] clicked
   │    └── POST /api/patrons/:patronId/interactions
   │         ├── Save interaction record
-  │         └── Voyage AI voyage-4 → interactionEmbedding stored
+  │         └── voyageai[local] voyage-4-nano → interactionEmbedding stored
   │
   └── [分析賭客] clicked
        └── POST /api/alerts/:alertId/analyze-patron
             ├── Fetch last 20 interactions + patron profile + alert
-            ├── Azure OpenAI → profileSummary, recommendations, suggestedPrId
+            ├── Azure OpenAI (via LiteLLM) → profileSummary, recommendations, suggestedPrId
             └── PatronAnalysisReport inserted into patron_analysis_reports
 ```
 
@@ -519,7 +693,7 @@ Alert Feed → Alert Card displayed in management console
 ```
 Management selects KPI template or types custom text
   └── POST /api/pr-efficiency/kpi-search { kpiText }
-       ├── Voyage AI voyage-4 query embedding (1024-dim)
+       ├── voyageai[local] voyage-4-nano query embedding (1024-dim, in-process)
        ├── $vectorSearch on patron_interaction_history
        │    index: interaction_embedding_idx
        │    limit: 300, numCandidates: 600
@@ -527,7 +701,7 @@ Management selects KPI template or types custom text
        ├── Application-layer grouping by recordedBy
        │    per PR: topMatchScore, matchedCount (≥0.70), kpiAchievementRate
        ├── Sort by kpiAchievementRate desc
-       └── Azure OpenAI → { insight, actions } (繁體中文 JSON)
+       └── Azure OpenAI (via LiteLLM) → { insight, actions } (繁體中文 JSON)
             ↓
        KPI results table rendered:
          PR Name | Matched/Total | Achievement Rate Bar | Top Score
@@ -539,18 +713,64 @@ Management selects KPI template or types custom text
 
 ## Scripts
 
+### Frontend (from `frontend/`)
+
 ```bash
-npm run dev                    # Next.js development server
-npm run build                  # Production build
-npm run start                  # Start production server
-npm run seed                   # Seed all collections with demo data (destructive)
-npm run seed:dry               # Preview seed counts without writing
-npm run seed:interactions      # Seed ~300 simulated PR interaction records (additive)
-npm run seed:interactions:dry  # Preview interaction seed counts without writing
-npm run backfill               # Backfill Voyage embeddings for offers + patron profiles
-npm run backfill:interactions  # Backfill interactionEmbedding for interaction records
-npm run check                  # TypeScript type check (tsc --noEmit)
-npm run stop                   # Kill port 3000
+npm run dev            # Next.js development server (http://localhost:3000)
+npm run build          # Production build (output: standalone)
+npm run start          # Start production server
+npm run check          # TypeScript type check (tsc --noEmit)
+npm run stop           # Kill port 3000
+```
+
+### Backend — Docker
+
+```bash
+# Seed
+docker compose exec backend uv run python -m app.seed.seed
+docker compose exec backend uv run python -m app.seed.seed --dry-run
+docker compose exec backend uv run python -m app.seed.seed_interactions
+docker compose exec backend uv run python -m app.seed.seed_interactions --dry-run
+
+# Backfill embeddings
+docker compose exec backend uv run python -m app.scripts.backfill_embeddings
+docker compose exec backend uv run python -m app.scripts.backfill_offer_embeddings
+docker compose exec backend uv run python -m app.scripts.backfill_interaction_embeddings
+
+# Smoke test
+docker compose exec backend uv run python -m app.smoke.gateway_smoke
+```
+
+### Backend — Local dev (from `server/`)
+
+```bash
+uv sync                # Install / update Python deps
+
+# Dev server
+uv run uvicorn app.main:app --reload --port 8000
+
+# Seed
+uv run python -m app.seed.seed
+uv run python -m app.seed.seed --dry-run
+uv run python -m app.seed.seed_interactions
+uv run python -m app.seed.seed_interactions --dry-run
+
+# Backfill Voyage embeddings (in-process voyage-4-nano)
+uv run python -m app.scripts.backfill_embeddings
+uv run python -m app.scripts.backfill_offer_embeddings
+uv run python -m app.scripts.backfill_interaction_embeddings
+
+# Data migrations / diagnostics
+uv run python -m app.scripts.backfill_patron_region
+uv run python -m app.scripts.migrate_activities_to_patrons
+uv run python -m app.scripts.check_recommendations [tableId]
+uv run python -m app.scripts.check_occupancy_mismatch
+uv run python -m app.scripts.find_strong_match_patrons
+uv run python -m app.scripts.inspect_patron_offers
+uv run python -m app.scripts.list_tables
+
+# Smoke test
+uv run python -m app.smoke.gateway_smoke
 ```
 
 ---

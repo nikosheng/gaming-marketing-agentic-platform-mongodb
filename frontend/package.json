@@ -1,0 +1,28 @@
+{
+  "name": "macau-gaming-marketing-ai-project",
+  "version": "1.0.0",
+  "description": "Casino patron marketing platform — Next.js UI (Python FastAPI backend lives in ./server)",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "check": "tsc --noEmit",
+    "stop": "kill-port 3000"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "next": "^16.2.4",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "kill-port": "^2.0.1",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,1 @@
+{"indexes":[{"v":{"$numberInt":"2"},"key":{"_id":{"$numberInt":"1"}},"name":"_id_"}],"uuid":"e02cf95343d240848f31c3def61e704b","collectionName":"patron_analysis_reports","type":"collection"}
