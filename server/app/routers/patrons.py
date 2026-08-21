@@ -20,6 +20,33 @@ router = APIRouter(tags=["patrons"])
 _ID_SAFE = re.compile(r"[^A-Z0-9-]", re.IGNORECASE)
 
 
+@router.get("/patrons/{patron_id}/profile")
+async def get_patron_profile(
+    patron_id: str, db: AsyncIOMotorDatabase = Depends(db_dep)
+) -> Any:
+    try:
+        doc = await db[cols.patrons].find_one(
+            {"patronId": patron_id},
+            {
+                "_id": 0,
+                "patronId": 1,
+                "maskedName": 1,
+                "tier": 1,
+                "adt": 1,
+                "preferredGames": 1,
+                "riskFlags": 1,
+                "pointsBalance": 1,
+                "lastActiveAt": 1,
+                "region": 1,
+            },
+        )
+        if not doc:
+            return error_response("Patron not found", status_code=404)
+        return ok_response(patron=doc)
+    except Exception as exc:  # noqa: BLE001
+        return error_response(str(exc))
+
+
 @router.get("/patrons/{patron_id}/interactions")
 async def list_interactions(
     patron_id: str, db: AsyncIOMotorDatabase = Depends(db_dep)

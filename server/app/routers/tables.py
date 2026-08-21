@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import random
 from datetime import datetime, timedelta, timezone
@@ -19,6 +20,8 @@ from app.agents.table_drilldown_agent import analyze_table_patrons
 from app.collections import web_collections as cols
 from app.config import settings
 from app.routers._common import db_dep, error_response, ok_response
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["tables"])
 
@@ -117,6 +120,7 @@ async def heatmap(db: AsyncIOMotorDatabase = Depends(db_dep)) -> Any:
             refreshedAt=refreshed_at.isoformat(), metrics=metrics, tables=enriched
         )
     except Exception as exc:  # noqa: BLE001
+        logger.exception("GET /tables/heatmap failed: %s", exc)
         return error_response(str(exc))
 
 
@@ -157,6 +161,7 @@ async def table_patrons(
         patrons = await db[cols.sessions].aggregate(pipeline).to_list(length=50)
         return ok_response(tableId=table_id, patronCount=len(patrons), patrons=patrons)
     except Exception as exc:  # noqa: BLE001
+        logger.exception("GET /tables/%s/patrons failed: %s", table_id, exc)
         return error_response(str(exc))
 
 
@@ -168,6 +173,7 @@ async def analyze(table_id: str, db: AsyncIOMotorDatabase = Depends(db_dep)) -> 
         analysis = await analyze_table_patrons(db, table_id)
         return ok_response(**analysis, engine="langgraph")
     except Exception as exc:  # noqa: BLE001
+        logger.exception("POST /tables/%s/analyze failed: %s", table_id, exc)
         return error_response(str(exc))
 
 
@@ -191,6 +197,7 @@ async def optimize_minbet(
             )
         return ok_response(recommendation=recommendation, engine="langgraph")
     except Exception as exc:  # noqa: BLE001
+        logger.exception("POST /tables/%s/optimize-minbet failed: %s", table_id, exc)
         return error_response(str(exc))
 
 
@@ -206,6 +213,7 @@ async def list_minbet_recommendations(
         ).sort("createdAt", -1).limit(10).to_list(length=10)
         return ok_response(tableId=table_id, recommendations=recs)
     except Exception as exc:  # noqa: BLE001
+        logger.exception("GET /tables/%s/minbet-recommendations failed: %s", table_id, exc)
         return error_response(str(exc))
 
 
@@ -298,6 +306,7 @@ async def apply_minbet_recommendation(
             appliedAt=now.isoformat(),
         )
     except Exception as exc:  # noqa: BLE001
+        logger.exception("POST /tables/%s/minbet-recommendations/%s/apply failed: %s", table_id, rec_id, exc)
         return error_response(str(exc))
 
 
@@ -334,6 +343,7 @@ async def reject_minbet_recommendation(
             )
         return ok_response(recommendationId=rec_id, status="Rejected")
     except Exception as exc:  # noqa: BLE001
+        logger.exception("POST /tables/%s/minbet-recommendations/%s/reject failed: %s", table_id, rec_id, exc)
         return error_response(str(exc))
 
 
@@ -544,6 +554,7 @@ async def simulate_sessions(
             occupancyRate=occupancy_rate,
         )
     except Exception as exc:  # noqa: BLE001
+        logger.exception("POST /tables/%s/simulate-sessions failed: %s", table_id, exc)
         return error_response(str(exc))
 
 
@@ -629,6 +640,13 @@ def _build_targeted_session_and_profile(
         tags = ["Aggressive"]
         tier = "Gold"
 
+    elif ctype == "ANY_ROUND_BET_THRESHOLD":
+        threshold = float(params.get("threshold", 5000))
+        bet = round(threshold * 1.2)
+        adt = round(threshold * 0.3)
+        tags = ["Aggressive"]
+        tier = "Silver"
+
     elif ctype == "SINGLE_ROUND_ADT_MULTIPLIER":
         multiplier = float(params.get("multiplier", 5))
         adt = max(800, round(min_bet * 2))
@@ -693,6 +711,7 @@ async def get_simulate_round_counter(
         counter = await db[cols.table_round_counters].find_one({"tableId": table_id})
         return ok_response(tableId=table_id, roundNumber=(counter or {}).get("roundNumber", 0))
     except Exception as exc:  # noqa: BLE001
+        logger.exception("GET /tables/%s/simulate-round failed: %s", table_id, exc)
         return error_response(str(exc))
 
 
@@ -866,4 +885,5 @@ async def simulate_round(
             alertsTriggered=alert_summary,
         )
     except Exception as exc:  # noqa: BLE001
+        logger.exception("POST /tables/%s/simulate-round failed: %s", table_id, exc)
         return error_response(str(exc))
