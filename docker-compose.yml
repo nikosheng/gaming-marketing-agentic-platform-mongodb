@@ -27,6 +27,7 @@ networks:
 
 volumes:
   mongo-data:
+  mongo-configdb:
   mongo-restore-sentinel:
   redis-data:
   voyage-model-cache:
@@ -46,6 +47,7 @@ services:
       - "27017:27017"
     volumes:
       - mongo-data:/data/db
+      - mongo-configdb:/data/configdb
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping').ok", "--quiet"]
       interval: 10s
@@ -170,10 +172,10 @@ services:
       - voyage-model-cache:/root/.cache/voyageai
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/api/health').status==200 else sys.exit(1)"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-      start_period: 30s
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 300s
     networks:
       - app-net
 

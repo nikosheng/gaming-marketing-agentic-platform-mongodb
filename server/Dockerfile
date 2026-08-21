@@ -19,13 +19,19 @@ COPY pyproject.toml uv.lock README.md ./
 
 # Install runtime dependencies only (skip dev extras).
 # --no-install-project: don't install the project itself yet (source not copied).
-RUN uv sync --frozen --no-dev --no-install-project
+# Cache-mount keeps the uv download cache across builds so repeated/invalidated
+# layers don't re-download packages from PyPI or the PyTorch CPU index.
+# UV_LINK_MODE=copy: cache and image layers are on different filesystems inside
+# BuildKit, so hardlinking is not supported — copy mode suppresses the warning.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    UV_LINK_MODE=copy uv sync --frozen --no-dev --no-install-project
 
 # Copy application source
 COPY app/ ./app/
 
 # Install the project package (app/) into the venv
-RUN uv sync --frozen --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    UV_LINK_MODE=copy uv sync --frozen --no-dev
 
 EXPOSE 8000
 
