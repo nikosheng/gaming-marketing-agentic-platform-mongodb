@@ -1,0 +1,1 @@
+{"indexes":[{"v":{"$numberInt":"2"},"key":{"_id":{"$numberInt":"1"}},"name":"_id_"},{"v":{"$numberInt":"2"},"key":{"tableId":{"$numberInt":"1"},"at":{"$numberInt":"-1"}},"name":"tableId_1_at_-1"}],"uuid":"2bab612fc0e94cc78a5c7fb0c5ff6836","collectionName":"table_minbet_audit","type":"collection"}
