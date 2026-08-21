@@ -14,6 +14,7 @@ dependencies = [
     "httpx>=0.27",
     "openai>=1.55",
     "voyageai[local]>=0.3.5",
+    "torch>=2.9.0",
     "langgraph>=0.2.60",
     "langchain-core>=0.3.20",
     "langgraph-checkpoint-mongodb>=0.1.0",
@@ -42,6 +43,23 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+# ---------------------------------------------------------------------------
+# uv: resolve torch from the CPU-only PyTorch index so the Docker image does
+# not download ~2 GB of NVIDIA CUDA wheels. The CPU wheel is ~270 MB and
+# sufficient for voyageai[local] / sentence-transformers inference on any host.
+#
+# We scope the index only to torch via [tool.uv.sources] so that other
+# packages (certifi, etc.) still resolve from PyPI, avoiding dependency-
+# confusion issues with the PyTorch index hosting stale versions.
+# ---------------------------------------------------------------------------
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 line-length = 100
