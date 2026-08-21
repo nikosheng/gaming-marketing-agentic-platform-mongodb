@@ -12,6 +12,7 @@ from app.schemas.base import MongoModel
 ConditionType = Literal[
     "CONSECUTIVE_ROUNDS_BET_THRESHOLD",
     "CUMULATIVE_ROUNDS_BET_THRESHOLD",
+    "ANY_ROUND_BET_THRESHOLD",
     "SINGLE_ROUND_ADT_MULTIPLIER",
     "SESSION_BET_ABOVE",
     "TIER_MATCH",

@@ -65,6 +65,35 @@ CONDITION_CATALOG: list[ConditionDefinition] = [
         example_nl="找到連續下注3輪每輪超過10000港幣的賭客",
     ),
     ConditionDefinition(
+        type="ANY_ROUND_BET_THRESHOLD",
+        display_name="N輪內任意一輪超閾值",
+        description=(
+            "在最近 N 輪中，至少有一輪的下注金額超過閾值。"
+            "例如3輪裡其中一輪下注超過1000港幣。"
+            "與連續N輪不同，這裡只要任意一輪滿足即可觸發。"
+        ),
+        semantic_keywords=[
+            "其中一輪", "任意一輪", "至少一輪", "any round", "at least one",
+            "有一輪", "某一輪", "其中", "只要一輪", "有其中", "裡面有",
+        ],
+        params={
+            "rounds": ConditionParamSchema(
+                type="integer",
+                description="觀察的輪次窗口大小",
+                default=3,
+                min=2,
+                max=20,
+            ),
+            "threshold": ConditionParamSchema(
+                type="number",
+                description="單輪下注下限（港幣），任一輪超過即滿足",
+                default=5000,
+                min=100,
+            ),
+        },
+        example_nl="找到3輪裡面有其中一輪下注超過1000港幣的賭客",
+    ),
+    ConditionDefinition(
         type="CUMULATIVE_ROUNDS_BET_THRESHOLD",
         display_name="N輪累計下注超閾值",
         description=(

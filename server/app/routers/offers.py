@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from datetime import datetime, timezone
 from typing import Any
@@ -12,6 +13,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.agents.offer_agent import create_offer_from_prompt
 from app.collections import web_collections as cols
 from app.routers._common import db_dep, error_response, ok_response
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["offers"])
 
@@ -247,6 +250,7 @@ async def dashboard(db: AsyncIOMotorDatabase = Depends(db_dep)) -> Any:
             recentActivities=recent_activities,
         )
     except Exception as exc:  # noqa: BLE001
+        logger.exception("GET /offers/dashboard failed: %s", exc)
         return error_response(str(exc))
 
 
@@ -383,6 +387,7 @@ async def generate(request: Request, db: AsyncIOMotorDatabase = Depends(db_dep))
             generator=generator,
         )
     except Exception as exc:  # noqa: BLE001
+        logger.exception("POST /offers/generate failed: %s", exc)
         return error_response(str(exc))
 
 
@@ -398,6 +403,7 @@ async def agent_chat(
         result = await create_offer_from_prompt(db, message)
         return ok_response(**result)
     except Exception as exc:  # noqa: BLE001
+        logger.exception("POST /offers/agent-chat failed: %s", exc)
         return error_response(str(exc))
 
 
@@ -486,6 +492,7 @@ async def approve_offer(
             body = {}
         return await _decide_offer(db, offer_id, "Approve", body)
     except Exception as exc:  # noqa: BLE001
+        logger.exception("POST /offers/%s/approve failed: %s", offer_id, exc)
         return error_response(str(exc))
 
 
@@ -500,4 +507,5 @@ async def reject_offer(
             body = {}
         return await _decide_offer(db, offer_id, "Reject", body)
     except Exception as exc:  # noqa: BLE001
+        logger.exception("POST /offers/%s/reject failed: %s", offer_id, exc)
         return error_response(str(exc))

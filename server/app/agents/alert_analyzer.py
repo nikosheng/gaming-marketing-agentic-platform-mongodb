@@ -117,6 +117,53 @@ async def _exec_cumulative_rounds_bet_threshold(
     ]
 
 
+async def _exec_any_round_bet_threshold(
+    db: AsyncIOMotorDatabase, table_id: str, round_number: int, params: Params
+) -> list[ConditionHit]:
+    rounds = int(params.get("rounds", 3))
+    threshold = float(params.get("threshold", 5000))
+    from_round = round_number - rounds + 1
+
+    cursor = db[cols.table_round_history].aggregate(
+        [
+            {"$match": {"tableId": table_id, "roundNumber": {"$gte": from_round, "$lte": round_number}}},
+            {
+                "$group": {
+                    "_id": "$patronId",
+                    "count": {"$sum": 1},
+                    "qualifyingRounds": {
+                        "$sum": {"$cond": [{"$gt": ["$betAmount", threshold]}, 1, 0]}
+                    },
+                    "maxBet": {"$max": "$betAmount"},
+                    "bets": {"$push": {"round": "$roundNumber", "amount": "$betAmount"}},
+                    "tier": {"$first": "$tier"},
+                    "adt": {"$first": "$adt"},
+                    "maskedName": {"$first": "$maskedName"},
+                }
+            },
+            {"$match": {"qualifyingRounds": {"$gte": 1}}},
+        ]
+    )
+    rows = await cursor.to_list(length=None)
+    return [
+        {
+            "patronId": r["_id"],
+            "tier": r["tier"],
+            "adt": r["adt"],
+            "maskedName": r["maskedName"],
+            "evidence": {
+                "conditionType": "ANY_ROUND_BET_THRESHOLD",
+                "rounds": rounds,
+                "threshold": threshold,
+                "qualifyingRounds": r["qualifyingRounds"],
+                "maxBet": r["maxBet"],
+                "bets": sorted(r.get("bets") or [], key=lambda b: b.get("round", 0)),
+            },
+        }
+        for r in rows
+    ]
+
+
 async def _exec_single_round_adt_multiplier(
     db: AsyncIOMotorDatabase, table_id: str, round_number: int, params: Params
 ) -> list[ConditionHit]:
@@ -268,6 +315,7 @@ Executor = Callable[
 _EXECUTORS: dict[ConditionType, Executor] = {
     "CONSECUTIVE_ROUNDS_BET_THRESHOLD": _exec_consecutive_rounds_bet_threshold,
     "CUMULATIVE_ROUNDS_BET_THRESHOLD": _exec_cumulative_rounds_bet_threshold,
+    "ANY_ROUND_BET_THRESHOLD": _exec_any_round_bet_threshold,
     "SINGLE_ROUND_ADT_MULTIPLIER": _exec_single_round_adt_multiplier,
     "SESSION_BET_ABOVE": _exec_session_bet_above,
     "TIER_MATCH": _exec_tier_match,
@@ -308,6 +356,11 @@ async def _generate_alert_rationale(
             parts.append(
                 f"本輪下注 HKD {_format_hkd(ev.get('betAmount'))}，"
                 f"為個人 ADT 的 {ev.get('adtRatio')} 倍（閾值 {ev.get('multiplier')} 倍）"
+            )
+        elif t == "ANY_ROUND_BET_THRESHOLD":
+            parts.append(
+                f"最近 {ev.get('rounds')} 輪中有 {ev.get('qualifyingRounds')} 輪下注超 "
+                f"HKD {_format_hkd(ev.get('threshold'))}（最高一輪 HKD {_format_hkd(ev.get('maxBet'))}）"
             )
         elif t == "SESSION_BET_ABOVE":
             parts.append(

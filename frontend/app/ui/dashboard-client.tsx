@@ -362,6 +362,16 @@ type SimGenPreview = {
   behaviorTags: string[];
 };
 
+type SimRoundHistory = {
+  tableId: string;
+  tableName: string;
+  roundNumber: number;
+  mode: "scripted" | "targeted";
+  sessionsInjected: number;
+  alertsTriggered: SimulateRoundResponse["alertsTriggered"];
+  ranAt: string;
+};
+
 const SIM_BEHAVIOR_TAGS = [
   "Aggressive",
   "Conservative",
@@ -542,10 +552,35 @@ type PatronAlert = {
   triggeredAt: string;
 };
 
+type PatronDetailProfile = {
+  patronId: string;
+  maskedName: string;
+  tier: string;
+  adt: number;
+  preferredGames: string[];
+  riskFlags: string[];
+  pointsBalance: number;
+  lastActiveAt?: string;
+  region?: string;
+};
+
+type PatronInteractionRecord = {
+  interactionId: string;
+  patronId: string;
+  type: "ROOM_COMP" | "FB_COMP" | "REBATE" | "EVENT_INVITE" | "OUTREACH" | "TRANSFER";
+  detail: Record<string, unknown>;
+  totalValueHKD: number;
+  occurredAt: string;
+  recordedBy: string;
+  linkedAlertId?: string;
+  patronTierAtTime?: string;
+};
+
 type SimulateRoundResponse = {
   ok: boolean;
   tableId: string;
   roundNumber: number;
+  mode?: "scripted" | "targeted";
   sessionsInjected: number;
   alertsTriggered: Array<{
     alertId: string;
@@ -906,6 +941,14 @@ export default function DashboardClient() {
   ]);
   const [riskCaseLoading, setRiskCaseLoading] = useState<boolean>(false);
   const [riskCaseModalOpen, setRiskCaseModalOpen] = useState<boolean>(false);
+  // ---------- Patron Detail Modal ----------
+  const [patronDetailModalPatronId, setPatronDetailModalPatronId] = useState<string | null>(null);
+  const [patronDetailProfile, setPatronDetailProfile] = useState<PatronDetailProfile | null>(null);
+  const [patronDetailInteractions, setPatronDetailInteractions] = useState<PatronInteractionRecord[]>([]);
+  const [patronDetailTotalValue, setPatronDetailTotalValue] = useState<number>(0);
+  const [patronDetailReports, setPatronDetailReports] = useState<PatronAnalysisReport[]>([]);
+  const [patronDetailLoading, setPatronDetailLoading] = useState<boolean>(false);
+  const [patronDetailError, setPatronDetailError] = useState<string>("");
   const [riskCase, setRiskCase] = useState<RiskCasePayload | null>(null);
   const [prAssignment, setPrAssignment] = useState<PRAssignmentPayload | null>(null);
   const [prAgentProfile, setPrAgentProfile] = useState<PRAgentProfileDTO>(null);
@@ -932,10 +975,7 @@ export default function DashboardClient() {
   const [rulePreview, setRulePreview] = useState<AlertRulePreview | null>(null);
   const [rulePreviewError, setRulePreviewError] = useState<string>("");
   const [ruleConfirming, setRuleConfirming] = useState<boolean>(false);
-  // Simulate Round state
-  const [roundNumbers, setRoundNumbers] = useState<Record<string, number>>({});
-  const [simulateRoundLoading, setSimulateRoundLoading] = useState<boolean>(false);
-  const [lastRoundResult, setLastRoundResult] = useState<SimulateRoundResponse | null>(null);
+  // Simulate Round state (moved to Simulate tab — see simRound* state below)
   // ---------- Patron Analysis state ----------
   const [analyzingAlertId, setAnalyzingAlertId] = useState<string | null>(null);
   const [expandedAnalysis, setExpandedAnalysis] = useState<Record<string, PatronAnalysisReport>>({});
@@ -951,6 +991,7 @@ export default function DashboardClient() {
   const [kpiResult, setKpiResult] = useState<KpiSearchResult | null>(null);
   const [kpiError, setKpiError] = useState<string>("");
   // ---------- Simulate tab state ----------
+  const [simTopMode, setSimTopMode] = useState<"session" | "round">("session");
   const [simMode, setSimMode] = useState<"update" | "new">("update");
   const [simTableId, setSimTableId] = useState<string>("");
   const [simTablePatrons, setSimTablePatrons] = useState<SimTablePatron[]>([]);
@@ -965,6 +1006,13 @@ export default function DashboardClient() {
   const [simError, setSimError] = useState<string>("");
   const [simSuccess, setSimSuccess] = useState<string>("");
   const [simHistory, setSimHistory] = useState<SimHistory[]>([]);
+  // ---------- Round Simulation state (merged into Simulate tab) ----------
+  const [simRoundLoading, setSimRoundLoading] = useState<boolean>(false);
+  const [simRoundResult, setSimRoundResult] = useState<SimulateRoundResponse | null>(null);
+  const [simRoundHistory, setSimRoundHistory] = useState<SimRoundHistory[]>([]);
+  const [simTargetRuleIds, setSimTargetRuleIds] = useState<string[]>([]);
+  const [simRoundNumbers, setSimRoundNumbers] = useState<Record<string, number>>({});
+  const [expandedMqlRuleId, setExpandedMqlRuleId] = useState<string | null>(null);
 
   async function safeJson<T>(res: Response): Promise<T | null> {
     if (!res.ok) return null;
@@ -1001,7 +1049,7 @@ export default function DashboardClient() {
 
   // Fetch alert rules + alerts when alert-dashboard section is activated
   useEffect(() => {
-    if (activeSection !== "alert-dashboard") return;
+    if (activeSection !== "alert-dashboard" && activeSection !== "simulate") return;
     async function fetchAlertRules() {
       setAlertRulesLoading(true);
       try {
@@ -1071,6 +1119,40 @@ export default function DashboardClient() {
       .finally(() => setSimPatronsLoading(false));
   }, [simTableId]);
 
+  // Fetch patron detail data when modal opens
+  useEffect(() => {
+    if (!patronDetailModalPatronId) {
+      setPatronDetailProfile(null);
+      setPatronDetailInteractions([]);
+      setPatronDetailTotalValue(0);
+      setPatronDetailReports([]);
+      setPatronDetailError("");
+      return;
+    }
+    setPatronDetailLoading(true);
+    setPatronDetailError("");
+    const pid = patronDetailModalPatronId;
+    Promise.all([
+      fetch(`/api/patrons/${pid}/profile`, { cache: "no-store" }).then((r) => r.json()),
+      fetch(`/api/patrons/${pid}/interactions`, { cache: "no-store" }).then((r) => r.json()),
+      fetch(`/api/patrons/${pid}/analysis-reports`, { cache: "no-store" }).then((r) => r.json()),
+    ])
+      .then(([profileData, interData, rptData]: [
+        { ok: boolean; patron?: PatronDetailProfile },
+        { ok: boolean; records?: PatronInteractionRecord[]; totalValue?: number },
+        { ok: boolean; reports?: PatronAnalysisReport[] },
+      ]) => {
+        if (profileData.ok && profileData.patron) setPatronDetailProfile(profileData.patron);
+        if (interData.ok) {
+          setPatronDetailInteractions(interData.records ?? []);
+          setPatronDetailTotalValue(interData.totalValue ?? 0);
+        }
+        if (rptData.ok) setPatronDetailReports(rptData.reports ?? []);
+      })
+      .catch((e: Error) => setPatronDetailError(e.message))
+      .finally(() => setPatronDetailLoading(false));
+  }, [patronDetailModalPatronId]);
+
   useEffect(() => {
     if (!selectedTableId) return;
     setTableAnalysis(null);
@@ -1107,7 +1189,10 @@ export default function DashboardClient() {
     }
     document.body.classList.add("drawer-open");
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setDrillDrawerOpen(false);
+      if (e.key === "Escape") {
+        if (patronDetailModalPatronId) { setPatronDetailModalPatronId(null); return; }
+        setDrillDrawerOpen(false);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => {
@@ -1758,21 +1843,44 @@ export default function DashboardClient() {
   }
 
   async function onSimulateRound() {
-    if (!selectedTableId || simulateRoundLoading) return;
-    setSimulateRoundLoading(true);
-    setLastRoundResult(null);
+    if (!simTableId || simRoundLoading) return;
+    setSimRoundLoading(true);
+    setSimRoundResult(null);
     try {
-      const res = await fetch(`/api/tables/${selectedTableId}/simulate-round`, {
+      const res = await fetch(`/api/tables/${simTableId}/simulate-round`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetRuleIds: simTargetRuleIds }),
       });
-      const data = (await res.json()) as SimulateRoundResponse;
+      const data = (await res.json()) as SimulateRoundResponse & { mode?: string };
       if (!data.ok) {
-        setError(data.error ?? "Failed to simulate round.");
+        setSimError(data.error ?? "Failed to simulate round.");
         return;
       }
-      setLastRoundResult(data);
-      setRoundNumbers((prev) => ({ ...prev, [selectedTableId]: data.roundNumber }));
+      setSimRoundResult(data);
+      setSimRoundNumbers((prev) => ({ ...prev, [simTableId]: data.roundNumber }));
+
+      // Add to round history (keep last 5)
+      const tableName = heatmap?.tables.find((t) => t.tableId === simTableId)?.tableName ?? simTableId;
+      const histEntry: SimRoundHistory = {
+        tableId: simTableId,
+        tableName,
+        roundNumber: data.roundNumber,
+        mode: (data.mode === "targeted" ? "targeted" : "scripted") as SimRoundHistory["mode"],
+        sessionsInjected: data.sessionsInjected,
+        alertsTriggered: data.alertsTriggered,
+        ranAt: new Date().toISOString(),
+      };
+      setSimRoundHistory((prev) => [histEntry, ...prev].slice(0, 5));
+
+      // Refresh patron list for Session tab (so injected patrons appear in dropdown)
+      fetch(`/api/simulate/tables/${simTableId}/patrons`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((d: { ok: boolean; patrons?: SimTablePatron[] }) => {
+          if (d.ok) setSimTablePatrons(d.patrons ?? []);
+        })
+        .catch(() => undefined);
+
       // Refresh alert feed if any alerts were triggered
       if (data.alertsTriggered.length > 0) {
         const alertRes = await fetch("/api/alerts?limit=50", { cache: "no-store" });
@@ -1791,9 +1899,9 @@ export default function DashboardClient() {
         if (rulesData.ok) setAlertRules(rulesData.rules ?? []);
       }
     } catch (err) {
-      setError((err as Error).message);
+      setSimError((err as Error).message);
     } finally {
-      setSimulateRoundLoading(false);
+      setSimRoundLoading(false);
     }
   }
 
@@ -1803,6 +1911,8 @@ export default function DashboardClient() {
         return `連續 ${params.rounds ?? "?"} 輪 每輪 > HKD ${Number(params.threshold ?? 0).toLocaleString()}`;
       case "CUMULATIVE_ROUNDS_BET_THRESHOLD":
         return `${params.rounds ?? "?"} 輪累計 > HKD ${Number(params.totalThreshold ?? 0).toLocaleString()}`;
+      case "ANY_ROUND_BET_THRESHOLD":
+        return `${params.rounds ?? "?"} 輪內任意一輪 > HKD ${Number(params.threshold ?? 0).toLocaleString()}`;
       case "SINGLE_ROUND_ADT_MULTIPLIER":
         return `單輪下注 > ADT × ${params.multiplier ?? "?"}`;
       case "SESSION_BET_ABOVE":
@@ -1816,6 +1926,87 @@ export default function DashboardClient() {
     }
   }
 
+  function buildMqlPreview(type: string, params: Record<string, number | string | string[]>): object[] {
+    const rounds = Number(params.rounds ?? 3);
+    const threshold = Number(params.threshold ?? 5000);
+
+    switch (type) {
+      case "CONSECUTIVE_ROUNDS_BET_THRESHOLD":
+        return [
+          { $match: { tableId: "<tableId>", roundNumber: { $gte: "<currentRound - " + (rounds - 1) + ">", $lte: "<currentRound>" } } },
+          { $group: {
+            _id: "$patronId",
+            count: { $sum: 1 },
+            minBet: { $min: "$betAmount" },
+            bets: { $push: { round: "$roundNumber", amount: "$betAmount" } },
+            tier: { $first: "$tier" },
+            adt: { $first: "$adt" },
+            maskedName: { $first: "$maskedName" },
+          }},
+          { $match: { count: { $gte: rounds }, minBet: { $gt: threshold } } },
+        ];
+      case "CUMULATIVE_ROUNDS_BET_THRESHOLD": {
+        const totalThreshold = Number(params.totalThreshold ?? 50000);
+        return [
+          { $match: { tableId: "<tableId>", roundNumber: { $gte: "<currentRound - " + (rounds - 1) + ">", $lte: "<currentRound>" } } },
+          { $group: {
+            _id: "$patronId",
+            count: { $sum: 1 },
+            total: { $sum: "$betAmount" },
+            bets: { $push: "$betAmount" },
+            tier: { $first: "$tier" },
+            adt: { $first: "$adt" },
+            maskedName: { $first: "$maskedName" },
+          }},
+          { $match: { count: { $gte: rounds }, total: { $gt: totalThreshold } } },
+        ];
+      }
+      case "ANY_ROUND_BET_THRESHOLD":
+        return [
+          { $match: { tableId: "<tableId>", roundNumber: { $gte: "<currentRound - " + (rounds - 1) + ">", $lte: "<currentRound>" } } },
+          { $group: {
+            _id: "$patronId",
+            count: { $sum: 1 },
+            qualifyingRounds: { $sum: { $cond: [{ $gt: ["$betAmount", threshold] }, 1, 0] } },
+            maxBet: { $max: "$betAmount" },
+            bets: { $push: { round: "$roundNumber", amount: "$betAmount" } },
+            tier: { $first: "$tier" },
+            adt: { $first: "$adt" },
+            maskedName: { $first: "$maskedName" },
+          }},
+          { $match: { qualifyingRounds: { $gte: 1 } } },
+        ];
+      case "SINGLE_ROUND_ADT_MULTIPLIER": {
+        const multiplier = Number(params.multiplier ?? 5);
+        return [
+          { $match: { tableId: "<tableId>", roundNumber: "<currentRound>" } },
+          { $match: { $expr: { $gt: ["$betAmount", { $multiply: ["$adt", multiplier] }] } } },
+        ];
+      }
+      case "SESSION_BET_ABOVE":
+        return [
+          { $match: { tableId: "<tableId>", isActive: true, sessionBetAmount: { $gt: threshold } } },
+          { $lookup: { from: "patron_profiles", localField: "patronId", foreignField: "patronId", as: "patron" } },
+          { $unwind: { path: "$patron", preserveNullAndEmptyArrays: true } },
+          { $project: { _id: 0, patronId: 1, sessionBetAmount: 1, tier: { $ifNull: ["$patron.tier", "Bronze"] }, adt: { $ifNull: ["$patron.adt", 0] }, maskedName: { $ifNull: ["$patron.maskedName", "$patronId"] } } },
+        ];
+      case "TIER_MATCH": {
+        const tiers = Array.isArray(params.tiers) ? params.tiers : ["Gold", "Platinum", "Diamond"];
+        return [
+          { $match: { tableId: "<tableId>", roundNumber: "<currentRound>", tier: { $in: tiers } } },
+        ];
+      }
+      case "BEHAVIOR_TAG_MATCH": {
+        const tags = Array.isArray(params.tags) ? params.tags : ["Aggressive"];
+        return [
+          { $match: { tableId: "<tableId>", roundNumber: "<currentRound>", behaviorTags: { $in: tags } } },
+        ];
+      }
+      default:
+        return [{ $match: { tableId: "<tableId>" } }];
+    }
+  }
+
   function formatAlertEvidence(type: string, evidence: Record<string, unknown>): string {
     switch (type) {
       case "CONSECUTIVE_ROUNDS_BET_THRESHOLD": {
@@ -1825,6 +2016,11 @@ export default function DashboardClient() {
       case "CUMULATIVE_ROUNDS_BET_THRESHOLD": {
         const bets = (evidence.bets as number[] | undefined) ?? [];
         return `${bets.map((b) => `HKD ${b.toLocaleString()}`).join(" + ")} = HKD ${Number(evidence.totalBet ?? 0).toLocaleString()}`;
+      }
+      case "ANY_ROUND_BET_THRESHOLD": {
+        const bets = (evidence.bets as Array<{ round: number; amount: number }> | undefined) ?? [];
+        const qualifying = bets.filter((b) => b.amount > Number(evidence.threshold ?? 0));
+        return `${qualifying.length}/${bets.length} 輪超 HKD ${Number(evidence.threshold ?? 0).toLocaleString()}，最高 HKD ${Number(evidence.maxBet ?? 0).toLocaleString()}`;
       }
       case "SINGLE_ROUND_ADT_MULTIPLIER":
         return `HKD ${Number(evidence.betAmount ?? 0).toLocaleString()} (${evidence.adtRatio}× ADT)`;
@@ -2612,56 +2808,18 @@ export default function DashboardClient() {
                 ) : null}
           </section>
 
-          {/* ── Simulate Round + Alert Analysis ── */}
-          <section className="simulate-round-section" key={`simulate-round-${selectedTableId}`}>
-            <div className="simulate-round-header">
-              <span className="simulate-round-title">輪次模擬 {"&"} Alert 分析</span>
-              <span className="round-counter-badge">
-                Round #{roundNumbers[selectedTableId] ?? 0}
-              </span>
-            </div>
-            <p className="simulate-round-desc">
-              注入本輪確定性下注資料（含測試賭客），自動對所有 Active Alert 規則執行 MQL 分析。
-              
+          {/* Simulate Round moved to Simulate tab */}
+          <section className="simulate-round-section" style={{ padding: "12px 0 4px" }}>
+            <p className="simulate-round-desc" style={{ margin: 0, fontSize: "0.78rem", opacity: 0.65 }}>
+              輪次模擬已移至{" "}
+              <button
+                type="button"
+                style={{ background: "none", border: "none", color: "rgba(255,170,94,0.9)", cursor: "pointer", fontSize: "0.78rem", padding: 0, textDecoration: "underline" }}
+                onClick={() => setActiveSection("simulate")}
+              >
+                Simulate 分頁 →
+              </button>
             </p>
-            <button
-              className="simulate-round-btn"
-              type="button"
-              onClick={() => onSimulateRound().catch(() => undefined)}
-              disabled={!selectedTableId || simulateRoundLoading}
-            >
-              {simulateRoundLoading ? "分析中..." : "▶ Simulate Round"}
-            </button>
-            {lastRoundResult && lastRoundResult.tableId === selectedTableId ? (
-              <div className="simulate-round-result">
-                {lastRoundResult.alertsTriggered.length > 0 ? (
-                  <>
-                    <div>
-                      本輪注入 <strong>{lastRoundResult.sessionsInjected}</strong> 位賭客 ·
-                      觸發 <span className="triggered-count">{lastRoundResult.alertsTriggered.length} 條 Alert</span>
-                    </div>
-                    <div style={{ marginTop: 5 }}>
-                      {lastRoundResult.alertsTriggered.map((a) => (
-                        <div key={a.alertId} style={{ fontSize: "0.75rem", color: "rgba(255,170,94,0.85)", marginTop: 3 }}>
-                          · {a.ruleName}: {a.patronId} ({a.conditionTypes.join(", ")})
-                        </div>
-                      ))}
-                    </div>
-                    <button
-                      className="simulate-view-dashboard-btn"
-                      type="button"
-                      onClick={() => setActiveSection("alert-dashboard")}
-                    >
-                      查看 Alert Dashboard →
-                    </button>
-                  </>
-                ) : (
-                  <div className="no-trigger">
-                    本輪注入 {lastRoundResult.sessionsInjected} 位賭客 · 無 Alert 觸發
-                  </div>
-                )}
-              </div>
-            ) : null}
           </section>
 
           {tableAnalysis ? (
@@ -3407,7 +3565,62 @@ export default function DashboardClient() {
                       {rule.lastTriggeredAt ? (
                         <> · 最後觸發：<span>{new Date(rule.lastTriggeredAt).toLocaleString("zh-HK")}</span></>
                       ) : null}
+                      <button
+                        type="button"
+                        style={{
+                          marginLeft: "auto",
+                          background: "none",
+                          border: "1px solid rgba(255,255,255,0.12)",
+                          borderRadius: 4,
+                          color: expandedMqlRuleId === rule.ruleId ? "rgba(255,170,94,0.9)" : "rgba(255,255,255,0.4)",
+                          fontSize: "0.7rem",
+                          padding: "2px 8px",
+                          cursor: "pointer",
+                          letterSpacing: "0.03em",
+                        }}
+                        onClick={() => setExpandedMqlRuleId(expandedMqlRuleId === rule.ruleId ? null : rule.ruleId)}
+                      >
+                        {expandedMqlRuleId === rule.ruleId ? "隱藏 MQL ▲" : "顯示 MQL ▼"}
+                      </button>
                     </div>
+                    {expandedMqlRuleId === rule.ruleId ? (
+                      <div style={{
+                        marginTop: 10,
+                        background: "rgba(0,0,0,0.35)",
+                        border: "1px solid rgba(255,170,94,0.2)",
+                        borderRadius: 6,
+                        padding: "10px 12px",
+                      }}>
+                        <div style={{ fontSize: "0.7rem", color: "rgba(255,170,94,0.7)", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 8 }}>
+                          MongoDB Aggregation Pipeline
+                        </div>
+                        {rule.conditions.map((cond, ci) => (
+                          <div key={`mql-${ci}`} style={{ marginBottom: ci < rule.conditions.length - 1 ? 14 : 0 }}>
+                            {rule.conditions.length > 1 ? (
+                              <div style={{ fontSize: "0.68rem", color: "rgba(255,255,255,0.35)", marginBottom: 4 }}>
+                                條件 {ci + 1}：{renderConditionLabel(cond.type, cond.params)}
+                              </div>
+                            ) : null}
+                            <div style={{ fontSize: "0.68rem", color: "rgba(255,255,255,0.3)", marginBottom: 4 }}>
+                              Collection: <span style={{ color: "rgba(255,170,94,0.6)" }}>
+                                {cond.type === "SESSION_BET_ABOVE" ? "patron_table_sessions" : "table_round_history"}
+                              </span>
+                            </div>
+                            <pre style={{
+                              margin: 0,
+                              fontSize: "0.72rem",
+                              color: "rgba(255,255,255,0.75)",
+                              overflowX: "auto",
+                              whiteSpace: "pre-wrap",
+                              wordBreak: "break-word",
+                              lineHeight: 1.55,
+                            }}>
+                              {JSON.stringify(buildMqlPreview(cond.type, cond.params), null, 2)}
+                            </pre>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 ))
               )}
@@ -3758,14 +3971,13 @@ export default function DashboardClient() {
                           ) : null}
                           <div className="patron-analysis-footer">
                             <span>分析報告 · {new Date(rpt.generatedAt).toLocaleString("zh-HK")} · {rpt.modelUsed}</span>
-                            <a
-                              href={`/patron-detail/${alert.patronId}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                            <button
+                              type="button"
                               className="patron-detail-link"
+                              onClick={() => setPatronDetailModalPatronId(alert.patronId)}
                             >
                               查看完整 Patron Detail →
-                            </a>
+                            </button>
                           </div>
                         </div>
                       );
@@ -4048,12 +4260,30 @@ export default function DashboardClient() {
         {activeSection === "simulate" ? (
           <div className="section-stack">
             <article className="panel-card sim-panel">
-              <h2 className="panel-title">Simulate Patron Session</h2>
+              <h2 className="panel-title">Simulate</h2>
               <p className="sim-panel-desc">
-                Write to <code>patron_table_sessions</code> to test live heatmap updates in Patron Eyes. Changes reflect within 5 seconds.
+                Test live data flows — manually inject patron sessions or run a full round with alert-rule targeting.
               </p>
 
-              {/* Step 1: Select Table */}
+              {/* Top-level mode switcher: Session | Round Simulation */}
+              <div className="sim-mode-tabs" style={{ marginBottom: 18 }}>
+                <button
+                  type="button"
+                  className={`sim-mode-tab ${simTopMode === "session" ? "active" : ""}`}
+                  onClick={() => { setSimTopMode("session"); setSimError(""); setSimSuccess(""); setSimRoundResult(null); }}
+                >
+                  Session
+                </button>
+                <button
+                  type="button"
+                  className={`sim-mode-tab ${simTopMode === "round" ? "active" : ""}`}
+                  onClick={() => { setSimTopMode("round"); setSimError(""); setSimSuccess(""); }}
+                >
+                  Round Simulation
+                </button>
+              </div>
+
+              {/* ── Shared table selector ── */}
               <div className="sim-step">
                 <div className="sim-step-header">
                   <span className="sim-step-number">1</span>
@@ -4062,7 +4292,7 @@ export default function DashboardClient() {
                 <select
                   className="sim-select"
                   value={simTableId}
-                  onChange={(e) => setSimTableId(e.target.value)}
+                  onChange={(e) => { setSimTableId(e.target.value); setSimRoundResult(null); }}
                 >
                   <option value="">— Choose a table —</option>
                   {(heatmap?.tables ?? []).map((t) => (
@@ -4073,7 +4303,12 @@ export default function DashboardClient() {
                 </select>
               </div>
 
-              {/* Mode Tab Switcher */}
+              {/* ════════════════════════════════════════════
+                  SESSION MODE
+                  ════════════════════════════════════════════ */}
+              {simTopMode === "session" ? (
+                <>
+              {/* Sub-mode Tab Switcher */}
               <div className={`sim-mode-tabs ${!simTableId ? "sim-step-disabled" : ""}`}>
                 <button
                   type="button"
@@ -4342,50 +4577,275 @@ export default function DashboardClient() {
                 </>
               ) : null}
 
-            </article>
-
-            {/* Recent Simulations */}
-            {simHistory.length > 0 ? (
-              <article className="panel-card">
-                <h2 className="panel-title">Recent Simulations</h2>
-                <div className="sim-history-list">
-                  {simHistory.map((entry, idx) => (
-                    <div key={`sim-hist-${idx}`} className="sim-history-row">
-                      <div className="sim-history-action-badge" data-action={entry.action}>
-                        {entry.action === "inserted" ? "NEW" : "UPD"}
+              {/* Recent Session Simulations */}
+              {simHistory.length > 0 && simTopMode === "session" ? (
+                <div className="panel-card" style={{ marginTop: 16 }}>
+                  <h2 className="panel-title">Recent Session Simulations</h2>
+                  <div className="sim-history-list">
+                    {simHistory.map((entry, idx) => (
+                      <div key={`sim-hist-${idx}`} className="sim-history-row">
+                        <div className="sim-history-action-badge" data-action={entry.action}>
+                          {entry.action === "inserted" ? "NEW" : "UPD"}
+                        </div>
+                        <div className="sim-history-body">
+                          <div className="sim-history-head">
+                            <span className="sim-history-patron">{entry.patronId}</span>
+                            <span className="sim-history-arrow">→</span>
+                            <span className="sim-history-table">{entry.tableName}</span>
+                            <span className={`sim-history-status ${entry.isActive ? "is-active" : "is-inactive"}`}>
+                              {entry.isActive ? "Active" : "Inactive"}
+                            </span>
+                            {entry.mode === "new" ? (
+                              <span className="sim-history-mode-badge">auto-generated</span>
+                            ) : null}
+                          </div>
+                          <div className="sim-history-meta">
+                            <span>HKD {entry.sessionBetAmount.toLocaleString()} bet</span>
+                            <span>·</span>
+                            <span>Stack HKD {entry.currentStackEstimate.toLocaleString()}</span>
+                            {entry.behaviorTags.length > 0 ? (
+                              <>
+                                <span>·</span>
+                                <span>{entry.behaviorTags.join(", ")}</span>
+                              </>
+                            ) : null}
+                          </div>
+                          <div className="sim-history-time">
+                            {new Date(entry.updatedAt).toLocaleTimeString()}
+                          </div>
+                        </div>
                       </div>
-                      <div className="sim-history-body">
-                        <div className="sim-history-head">
-                          <span className="sim-history-patron">{entry.patronId}</span>
-                          <span className="sim-history-arrow">→</span>
-                          <span className="sim-history-table">{entry.tableName}</span>
-                          <span className={`sim-history-status ${entry.isActive ? "is-active" : "is-inactive"}`}>
-                            {entry.isActive ? "Active" : "Inactive"}
-                          </span>
-                          {entry.mode === "new" ? (
-                            <span className="sim-history-mode-badge">auto-generated</span>
-                          ) : null}
-                        </div>
-                        <div className="sim-history-meta">
-                          <span>HKD {entry.sessionBetAmount.toLocaleString()} bet</span>
-                          <span>·</span>
-                          <span>Stack HKD {entry.currentStackEstimate.toLocaleString()}</span>
-                          {entry.behaviorTags.length > 0 ? (
-                            <>
-                              <span>·</span>
-                              <span>{entry.behaviorTags.join(", ")}</span>
-                            </>
-                          ) : null}
-                        </div>
-                        <div className="sim-history-time">
-                          {new Date(entry.updatedAt).toLocaleTimeString()}
-                        </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </>
+            ) : null}
+
+              {/* ════════════════════════════════════════════
+                  ROUND SIMULATION MODE
+                  ════════════════════════════════════════════ */}
+              {simTopMode === "round" ? (
+                <>
+                  {/* Step 2: Target Alert Rules */}
+                  <div className={`sim-step ${!simTableId ? "sim-step-disabled" : ""}`}>
+                    <div className="sim-step-header">
+                      <span className="sim-step-number">2</span>
+                      <span className="sim-step-label">Target Alert Rules</span>
+                      <span className="sim-step-badge">optional</span>
+                    </div>
+                    <p className="sim-gen-desc" style={{ marginBottom: 10 }}>
+                      Select rules to generate patrons <strong>guaranteed to trigger</strong> the selected conditions.
+                      Leave all unchecked to use the default scripted sequences.
+                    </p>
+                    {alertRules.length === 0 ? (
+                      <p className="sim-empty-hint">No alert rules found. Create rules in the Alert Dashboard first.</p>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {alertRules.map((rule) => {
+                          const isSelected = simTargetRuleIds.includes(rule.ruleId);
+                          const isPaused = rule.status === "Paused";
+                          const condSummary = (rule.conditions ?? [])
+                            .map((c) => {
+                              const p = c.params ?? {};
+                              switch (c.type) {
+                                case "CONSECUTIVE_ROUNDS_BET_THRESHOLD":
+                                  return `連續${p.rounds ?? "?"}輪 > HKD ${Number(p.threshold ?? 0).toLocaleString()}`;
+                                case "CUMULATIVE_ROUNDS_BET_THRESHOLD":
+                                   return `${p.rounds ?? "?"}輪累計 > HKD ${Number(p.totalThreshold ?? 0).toLocaleString()}`;
+                                 case "ANY_ROUND_BET_THRESHOLD":
+                                   return `${p.rounds ?? "?"}輪內任意一輪 > HKD ${Number(p.threshold ?? 0).toLocaleString()}`;
+                                 case "SINGLE_ROUND_ADT_MULTIPLIER":
+                                  return `ADT × ${p.multiplier ?? "?"}`;
+                                case "SESSION_BET_ABOVE":
+                                  return `Session > HKD ${Number(p.threshold ?? 0).toLocaleString()}`;
+                                case "TIER_MATCH":
+                                  return `Tier: ${(p.tiers as string[] | undefined)?.join(", ") ?? "?"}`;
+                                case "BEHAVIOR_TAG_MATCH":
+                                  return `Tags: ${(p.tags as string[] | undefined)?.join(", ") ?? "?"}`;
+                                default:
+                                  return c.type;
+                              }
+                            })
+                            .join(" · ");
+                          // Note for round-accumulation conditions
+                          const needsMultiRound = (rule.conditions ?? []).some(
+                            (c) =>
+                              c.type === "CONSECUTIVE_ROUNDS_BET_THRESHOLD" ||
+                              c.type === "CUMULATIVE_ROUNDS_BET_THRESHOLD"
+                          );
+                          return (
+                            <label
+                              key={rule.ruleId}
+                              style={{
+                                display: "flex",
+                                alignItems: "flex-start",
+                                gap: 10,
+                                padding: "10px 12px",
+                                borderRadius: 8,
+                                border: `1px solid ${isSelected ? "rgba(255,170,94,0.5)" : "rgba(255,255,255,0.08)"}`,
+                                background: isSelected ? "rgba(255,170,94,0.06)" : "rgba(255,255,255,0.02)",
+                                cursor: isPaused ? "not-allowed" : "pointer",
+                                opacity: isPaused ? 0.45 : 1,
+                                transition: "all 0.15s",
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                disabled={isPaused}
+                                checked={isSelected}
+                                style={{ marginTop: 2, accentColor: "rgba(255,170,94,0.9)", flexShrink: 0 }}
+                                onChange={() => {
+                                  if (isPaused) return;
+                                  setSimTargetRuleIds((prev) =>
+                                    prev.includes(rule.ruleId)
+                                      ? prev.filter((id) => id !== rule.ruleId)
+                                      : [...prev, rule.ruleId]
+                                  );
+                                }}
+                              />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                  <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>{rule.name}</span>
+                                  <span className={`analysis-badge ${isPaused ? "low" : "medium"}`} style={{ fontSize: "0.65rem" }}>
+                                    {isPaused ? "Paused" : "Active"}
+                                  </span>
+                                  {needsMultiRound && isSelected ? (
+                                    <span style={{ fontSize: "0.65rem", color: "rgba(255,170,94,0.7)", fontStyle: "italic" }}>
+                                      ⚠ requires N rounds
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <div style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.45)", marginTop: 3 }}>
+                                  {condSummary}
+                                </div>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {simTargetRuleIds.length > 0 ? (
+                      <button
+                        type="button"
+                        style={{ marginTop: 8, background: "none", border: "none", color: "rgba(255,255,255,0.35)", fontSize: "0.75rem", cursor: "pointer", padding: 0 }}
+                        onClick={() => setSimTargetRuleIds([])}
+                      >
+                        Clear selection
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {/* Step 3: Run */}
+                  <div className={`sim-step ${!simTableId ? "sim-step-disabled" : ""}`}>
+                    <div className="sim-step-header">
+                      <span className="sim-step-number">3</span>
+                      <span className="sim-step-label">Run Round</span>
+                      {simTableId ? (
+                        <span className="round-counter-badge" style={{ marginLeft: "auto" }}>
+                          Round #{simRoundNumbers[simTableId] ?? 0}
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="sim-gen-desc">
+                      {simTargetRuleIds.length > 0
+                        ? `Generates ${simTargetRuleIds.length} targeted patron(s) tuned to satisfy the selected rule conditions, then runs alert analysis.`
+                        : "Injects 9 scripted patrons with deterministic bet sequences, then runs alert analysis against all Active rules."}
+                    </p>
+
+                    {simError ? <div className="sim-feedback sim-feedback-error" style={{ marginBottom: 10 }}>{simError}</div> : null}
+
+                    <button
+                      className="simulate-round-btn"
+                      type="button"
+                      disabled={!simTableId || simRoundLoading}
+                      onClick={() => onSimulateRound().catch(() => undefined)}
+                    >
+                      {simRoundLoading ? "分析中..." : "▶ Simulate Round"}
+                    </button>
+
+                    {/* Result */}
+                    {simRoundResult && simRoundResult.tableId === simTableId ? (
+                      <div className="simulate-round-result" style={{ marginTop: 14 }}>
+                        {simRoundResult.alertsTriggered.length > 0 ? (
+                          <>
+                            <div>
+                              {simRoundResult.mode === "targeted" ? (
+                                <span style={{ fontSize: "0.75rem", color: "rgba(255,170,94,0.65)", marginRight: 6 }}>[targeted]</span>
+                              ) : null}
+                              Injected <strong>{simRoundResult.sessionsInjected}</strong> patron(s) ·{" "}
+                              <span className="triggered-count">{simRoundResult.alertsTriggered.length} Alert(s) triggered</span>
+                            </div>
+                            <div style={{ marginTop: 6 }}>
+                              {simRoundResult.alertsTriggered.map((a) => (
+                                <div key={a.alertId} style={{ fontSize: "0.75rem", color: "rgba(255,170,94,0.85)", marginTop: 3 }}>
+                                  · {a.ruleName}: {a.patronId} ({a.conditionTypes.join(", ")})
+                                </div>
+                              ))}
+                            </div>
+                            <button
+                              className="simulate-view-dashboard-btn"
+                              type="button"
+                              onClick={() => setActiveSection("alert-dashboard")}
+                            >
+                              查看 Alert Dashboard →
+                            </button>
+                          </>
+                        ) : (
+                          <div className="no-trigger">
+                            {simRoundResult.mode === "targeted" ? (
+                              <span style={{ fontSize: "0.75rem", color: "rgba(255,170,94,0.65)", marginRight: 6 }}>[targeted]</span>
+                            ) : null}
+                            Injected {simRoundResult.sessionsInjected} patron(s) · No alerts triggered
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {/* Round History */}
+                  {simRoundHistory.length > 0 ? (
+                    <div style={{ marginTop: 8 }}>
+                      <div style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.35)", marginBottom: 6, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                        Round History
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {simRoundHistory.map((h, idx) => (
+                          <div
+                            key={`rh-${idx}`}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                              padding: "7px 10px",
+                              borderRadius: 6,
+                              background: "rgba(255,255,255,0.03)",
+                              fontSize: "0.78rem",
+                            }}
+                          >
+                            <span style={{ color: "rgba(255,255,255,0.4)", minWidth: 60 }}>Round #{h.roundNumber}</span>
+                            <span style={{ color: "rgba(255,255,255,0.6)" }}>{h.tableName}</span>
+                            <span className={`sim-history-mode-badge`} style={{ fontSize: "0.65rem" }}>{h.mode}</span>
+                            <span style={{ color: "rgba(255,255,255,0.4)" }}>{h.sessionsInjected} patrons</span>
+                            {h.alertsTriggered.length > 0 ? (
+                              <span className="triggered-count" style={{ fontSize: "0.72rem" }}>
+                                {h.alertsTriggered.length} alert{h.alertsTriggered.length !== 1 ? "s" : ""}
+                              </span>
+                            ) : (
+                              <span style={{ color: "rgba(255,255,255,0.25)", fontSize: "0.72rem" }}>no alerts</span>
+                            )}
+                            <span style={{ marginLeft: "auto", color: "rgba(255,255,255,0.25)" }}>
+                              {new Date(h.ranAt).toLocaleTimeString()}
+                            </span>
+                          </div>
+                        ))}
                       </div>
                     </div>
-                  ))}
-                </div>
-              </article>
-            ) : null}
+                  ) : null}
+                </>
+              ) : null}
+
+            </article>
 
           </div>
         ) : null}
@@ -4948,6 +5408,191 @@ export default function DashboardClient() {
           </div>
         </div>
       ) : null}
+      {/* ── Patron Detail Modal ── */}
+      {patronDetailModalPatronId ? (
+        <div
+          className="risk-modal-overlay"
+          onClick={() => setPatronDetailModalPatronId(null)}
+          role="presentation"
+        >
+          <div
+            className="risk-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Patron Detail"
+            style={{ maxWidth: 900, width: "95vw", maxHeight: "88vh", overflowY: "auto", padding: 0 }}
+          >
+            {/* Header */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: 12,
+              padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)",
+              position: "sticky", top: 0, background: "var(--panel-bg, #1a1a2e)", zIndex: 1,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ fontWeight: 700, fontSize: "1rem" }}>
+                    {patronDetailProfile?.maskedName ?? patronDetailModalPatronId}
+                  </span>
+                  {patronDetailProfile?.tier ? (
+                    <span className={`tier-chip tier-chip-${patronDetailProfile.tier.toLowerCase()}`}>
+                      {patronDetailProfile.tier}
+                    </span>
+                  ) : null}
+                  {patronDetailProfile?.adt ? (
+                    <span style={{ fontSize: "0.78rem", color: "rgba(255,255,255,0.45)" }}>
+                      ADT HKD {patronDetailProfile.adt.toLocaleString()}
+                    </span>
+                  ) : null}
+                </div>
+                <div style={{ fontSize: "0.72rem", color: "rgba(255,255,255,0.3)", marginTop: 3 }}>
+                  {patronDetailModalPatronId}
+                  {patronDetailProfile?.region ? ` · ${patronDetailProfile.region}` : ""}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPatronDetailModalPatronId(null)}
+                style={{ background: "none", border: "none", color: "rgba(255,255,255,0.45)", fontSize: "1.3rem", cursor: "pointer", lineHeight: 1, padding: "2px 6px", flexShrink: 0 }}
+                aria-label="關閉"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: "16px 20px" }}>
+              {patronDetailLoading ? (
+                <div style={{ textAlign: "center", color: "rgba(255,255,255,0.4)", padding: "40px 0" }}>載入資料中…</div>
+              ) : patronDetailError ? (
+                <div style={{ color: "rgba(255,80,80,0.8)", padding: "20px 0" }}>錯誤：{patronDetailError}</div>
+              ) : (
+                <>
+                  {/* Two-column: left profile + right reports */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 16, marginBottom: 16 }}>
+
+                    {/* Left: Basic Info */}
+                    <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "14px 16px", border: "1px solid rgba(255,255,255,0.07)" }}>
+                      <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "rgba(255,170,94,0.8)", letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 12 }}>基本資料</div>
+                      {[
+                        ["Tier", patronDetailProfile?.tier ?? "—"],
+                        ["ADT", patronDetailProfile?.adt != null ? `HKD ${patronDetailProfile.adt.toLocaleString()}` : "—"],
+                        ["偏好遊戲", patronDetailProfile?.preferredGames?.length ? patronDetailProfile.preferredGames.join(", ") : "—"],
+                        ["風險標籤", patronDetailProfile?.riskFlags?.filter((f) => f !== "None").length ? patronDetailProfile.riskFlags.join(", ") : "—"],
+                        ["積分餘額", patronDetailProfile?.pointsBalance != null ? patronDetailProfile.pointsBalance.toLocaleString() : "—"],
+                        ["歷史優惠總值", `HKD ${patronDetailTotalValue.toLocaleString()}`],
+                        ["上次活躍", patronDetailProfile?.lastActiveAt ? new Date(patronDetailProfile.lastActiveAt).toLocaleDateString("zh-HK") : "—"],
+                      ].map(([k, v]) => (
+                        <div key={k} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 8, fontSize: "0.8rem" }}>
+                          <span style={{ color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>{k}</span>
+                          <span style={{ color: "rgba(255,255,255,0.85)", textAlign: "right", wordBreak: "break-word",
+                            ...(k === "風險標籤" && patronDetailProfile?.riskFlags?.filter((f) => f !== "None").length ? { color: "rgba(255,120,120,0.9)" } : {}) }}>
+                            {v}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Right: AI Analysis Reports */}
+                    <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "14px 16px", border: "1px solid rgba(255,255,255,0.07)", overflowY: "auto", maxHeight: 340 }}>
+                      <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "rgba(255,170,94,0.8)", letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 12 }}>AI 分析報告</div>
+                      {patronDetailReports.length === 0 ? (
+                        <div style={{ fontSize: "0.78rem", color: "rgba(255,255,255,0.3)" }}>尚無分析報告。在 Alert Feed 中點擊「分析賭客」以生成。</div>
+                      ) : (
+                        patronDetailReports.map((rpt) => (
+                          <div key={rpt.reportId} style={{ marginBottom: 16, paddingBottom: 14, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: "0.68rem", color: "rgba(255,255,255,0.3)" }}>{new Date(rpt.generatedAt).toLocaleString("zh-HK")}</span>
+                              <span style={{ fontSize: "0.65rem", padding: "1px 6px", borderRadius: 3, background: rpt.status === "Actioned" ? "rgba(80,200,120,0.15)" : rpt.status === "Acknowledged" ? "rgba(100,160,255,0.15)" : "rgba(255,255,255,0.08)", color: rpt.status === "Actioned" ? "rgba(80,200,120,0.9)" : rpt.status === "Acknowledged" ? "rgba(100,160,255,0.9)" : "rgba(255,255,255,0.4)" }}>
+                                {rpt.status === "Actioned" ? "已執行" : rpt.status === "Acknowledged" ? "已閱讀" : "草稿"}
+                              </span>
+                              <span style={{ fontSize: "0.65rem", color: "rgba(255,255,255,0.2)" }}>{rpt.modelUsed}</span>
+                            </div>
+                            {([
+                              ["個人 Profile", rpt.profileSummary],
+                              ["歷史互動摘要", rpt.interactionHistory],
+                              ["行為規律", rpt.behaviorPattern],
+                              ["機會 / 風險評估", rpt.riskAssessment],
+                            ] as [string, string][]).map(([title, text]) => text ? (
+                              <div key={title} style={{ marginBottom: 8 }}>
+                                <div style={{ fontSize: "0.68rem", fontWeight: 600, color: "rgba(255,255,255,0.35)", marginBottom: 3 }}>{title}</div>
+                                <div style={{ fontSize: "0.78rem", color: "rgba(255,255,255,0.75)", whiteSpace: "pre-line", lineHeight: 1.55 }}>{text}</div>
+                              </div>
+                            ) : null)}
+                            {rpt.recommendations?.length > 0 ? (
+                              <div style={{ marginBottom: 8 }}>
+                                <div style={{ fontSize: "0.68rem", fontWeight: 600, color: "rgba(255,255,255,0.35)", marginBottom: 6 }}>下一步銷售建議</div>
+                                {rpt.recommendations.map((rec, ri) => (
+                                  <div key={ri} style={{ marginBottom: 8, paddingLeft: 10, borderLeft: "2px solid rgba(255,170,94,0.25)" }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2, flexWrap: "wrap" }}>
+                                      <span style={{ fontSize: "0.65rem", fontWeight: 700, color: "rgba(255,170,94,0.8)" }}>P{rec.priority}</span>
+                                      <span style={{ fontSize: "0.65rem", color: rec.urgency === "Immediate" ? "rgba(255,100,100,0.8)" : rec.urgency === "Within48h" ? "rgba(255,180,60,0.8)" : "rgba(100,200,150,0.8)" }}>
+                                        {rec.urgency === "Immediate" ? "立即" : rec.urgency === "Within48h" ? "48小時內" : "本週"}
+                                      </span>
+                                      <span style={{ fontSize: "0.78rem", fontWeight: 600 }}>{rec.title}</span>
+                                      {rec.estimatedValue ? <span style={{ fontSize: "0.68rem", color: "rgba(255,255,255,0.35)" }}>~HKD {rec.estimatedValue.toLocaleString()}</span> : null}
+                                    </div>
+                                    <div style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.55)" }}>{rec.rationale}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                            {rpt.suggestedPrName ? (
+                              <div style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.45)", marginTop: 4 }}>
+                                建議公關：<span style={{ color: "rgba(255,255,255,0.75)", fontWeight: 600 }}>{rpt.suggestedPrName}</span>
+                                {rpt.suggestedPrId ? <span style={{ marginLeft: 6, color: "rgba(255,255,255,0.25)", fontSize: "0.68rem" }}>{rpt.suggestedPrId}</span> : null}
+                              </div>
+                            ) : null}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Interaction Timeline (read-only, full width) */}
+                  <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "14px 16px", border: "1px solid rgba(255,255,255,0.07)" }}>
+                    <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "rgba(255,170,94,0.8)", letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 12 }}>互動歷史記錄</div>
+                    {patronDetailInteractions.length === 0 ? (
+                      <div style={{ fontSize: "0.78rem", color: "rgba(255,255,255,0.3)" }}>暫無互動記錄</div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                        {patronDetailInteractions.map((rec) => {
+                          const iconMap: Record<string, string> = { ROOM_COMP: "🏨", FB_COMP: "🍽️", REBATE: "💰", EVENT_INVITE: "🎟️", OUTREACH: "📞", TRANSFER: "🚗" };
+                          const labelMap: Record<string, string> = { ROOM_COMP: "免費房間", FB_COMP: "餐飲優惠", REBATE: "現金/籌碼回贈", EVENT_INVITE: "活動邀請", OUTREACH: "電話/親身接觸", TRANSFER: "交通接送" };
+                          const d = rec.detail ?? {};
+                          const detailParts: string[] = [];
+                          if (rec.type === "ROOM_COMP") { if (d.roomType) detailParts.push(String(d.roomType)); if (d.roomNights) detailParts.push(`${d.roomNights}晚`); }
+                          else if (rec.type === "FB_COMP" && d.venue) detailParts.push(String(d.venue));
+                          else if (rec.type === "REBATE" && d.rebateRate) detailParts.push(`回贈率 ${(Number(d.rebateRate) * 100).toFixed(1)}%`);
+                          else if (rec.type === "EVENT_INVITE") { if (d.eventName) detailParts.push(String(d.eventName)); }
+                          else if (rec.type === "OUTREACH") { if (d.channel) detailParts.push(String(d.channel)); if (d.outcome) detailParts.push(String(d.outcome)); }
+                          else if (rec.type === "TRANSFER" && d.transferType) detailParts.push(String(d.transferType));
+                          if (d.notes && rec.type === "OUTREACH") detailParts.push(String(d.notes));
+                          return (
+                            <div key={rec.interactionId} style={{ display: "flex", gap: 12, padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                              <div style={{ fontSize: "1.1rem", flexShrink: 0, width: 28, textAlign: "center" }}>{iconMap[rec.type] ?? "·"}</div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                  <span style={{ fontSize: "0.8rem", fontWeight: 600 }}>{labelMap[rec.type] ?? rec.type}</span>
+                                  {rec.totalValueHKD > 0 ? <span style={{ fontSize: "0.75rem", color: "rgba(255,170,94,0.8)" }}>HKD {rec.totalValueHKD.toLocaleString()}</span> : null}
+                                  <span style={{ fontSize: "0.68rem", color: "rgba(255,255,255,0.3)", marginLeft: "auto" }}>{new Date(rec.occurredAt).toLocaleDateString("zh-HK")}</span>
+                                </div>
+                                {detailParts.length > 0 ? <div style={{ fontSize: "0.73rem", color: "rgba(255,255,255,0.45)", marginTop: 3 }}>{detailParts.join(" · ")}</div> : null}
+                                {rec.linkedAlertId ? <div style={{ fontSize: "0.68rem", color: "rgba(255,255,255,0.25)", marginTop: 2 }}>關聯 Alert: {rec.linkedAlertId}</div> : null}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {rejectOfferId ? (
         <div
           className="reject-modal-overlay"
